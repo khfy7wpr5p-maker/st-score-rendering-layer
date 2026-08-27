@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>R4 OSMD interaction fixture</title></head>
+<body>
+  <div id="score"></div>
+  <div id="status" data-render-pass="false">R4_PENDING</div>
+  <script src="../../node_modules/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+  <script>
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+    <score-part id="P2"><part-name>Flute</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note></measure>
+    <measure number="2"><note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note></measure>
+  </part>
+  <part id="P2">
+    <measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes><note><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note></measure>
+    <measure number="2"><note><pitch><step>A</step><octave>5</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note></measure>
+  </part>
+</score-partwise>`;
+
+    (async () => {
+      const status = document.getElementById("status");
+      try {
+        const OSMD = window.opensheetmusicdisplay?.OpenSheetMusicDisplay;
+        if (!OSMD) throw new Error("OSMD browser global is unavailable");
+        const osmd = new OSMD("score", { autoResize: false, backend: "svg", drawTitle: false, drawComposer: false });
+        await osmd.load(xml);
+        osmd.render();
+
+        osmd.cursor.reset();
+        osmd.cursor.show();
+        osmd.cursor.nextMeasure();
+        if (osmd.cursor.Iterator.CurrentMeasureIndex !== 1) throw new Error("cursor did not reach measure 1");
+
+        const p1 = osmd.Sheet.Instruments.find((instrument) => instrument.IdString === "P1");
+        const p2 = osmd.Sheet.Instruments.find((instrument) => instrument.IdString === "P2");
+        if (!p1 || !p2) throw new Error("MusicXML part ids were not preserved by OSMD");
+
+        const staffId = p1.Staves[0].idInMusicSheet;
+        const graphicalMeasure = osmd.graphic.measureList[0][staffId];
+        const graphicalNote = graphicalMeasure.staffEntries
+          .flatMap((staffEntry) => staffEntry.graphicalVoiceEntries)
+          .flatMap((voiceEntry) => voiceEntry.notes)[0];
+        const noteElement = graphicalNote?.getSVGGElement?.();
+        if (!noteElement) throw new Error("graphical note SVG element unavailable");
+        noteElement.classList.add("st-score-highlight");
+        noteElement.setAttribute("data-st-score-highlight", "true");
+        if (noteElement.getAttribute("data-st-score-highlight") !== "true") throw new Error("note highlight marker failed");
+
+        p2.Visible = false;
+        if (p2.Visible !== false) throw new Error("part visibility setter failed");
+        osmd.updateGraphic();
+        osmd.render();
+        if (p2.isVisible()) throw new Error("hidden part remains visible after graphic rebuild");
+
+        if (!document.querySelector("#score svg")) throw new Error("interaction rerender produced no SVG");
+        status.dataset.renderPass = "true";
+        status.textContent = "R4_PASS";
+      } catch (error) {
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "R4_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>

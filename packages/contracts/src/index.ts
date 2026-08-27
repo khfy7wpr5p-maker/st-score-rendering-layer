@@ -1,4 +1,4 @@
-export const SCORE_RENDERER_CONTRACT_VERSION = "0.1.0" as const;
+export const SCORE_RENDERER_CONTRACT_VERSION = "0.2.0" as const;
 
 export type ScoreSource = Readonly<{
   kind: "musicxml";
@@ -18,7 +18,19 @@ export type ScoreRenderResult = Readonly<{
   contractVersion: typeof SCORE_RENDERER_CONTRACT_VERSION;
 }>;
 
-export type ScoreNoteRef = Readonly<{ partId: string; measureIndex: number; noteIndex: number; voice?: number }>;
+/**
+ * Stable rendered-note locator.
+ * `noteIndex` is zero-based within the selected part + measure after optional `voice`
+ * filtering, traversed in instrument-staff, staff-entry, graphical-voice-entry, note order.
+ * `voice`, when supplied, is the MusicXML/OSMD voice id.
+ */
+export type ScoreNoteRef = Readonly<{
+  partId: string;
+  measureIndex: number;
+  noteIndex: number;
+  voice?: number;
+}>;
+
 export type ScoreMeasureRef = Readonly<{ partId: string; measureIndex: number }>;
 export type ScorePartRef = Readonly<{ partId: string }>;
 export type ScoreHighlight = Readonly<{ target: ScoreNoteRef; className?: string }>;
