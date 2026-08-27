@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {"rootDir": "src", "outDir": "dist", "composite": true, "lib": ["ES2022", "DOM", "DOM.Iterable"]},
+  "references": [{"path": "../contracts"}, {"path": "../renderer-core"}, {"path": "../adapter-osmd"}],
+  "include": ["src/**/*.ts"]
+}
