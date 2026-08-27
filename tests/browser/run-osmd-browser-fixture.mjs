@@ -1,0 +1,67 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import path from "node:path";
+
+const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const fixturePath = path.join(repoRoot, "tests/browser/osmd-browser-fixture.html");
+
+const candidates = [
+  process.env.CHROME_BIN,
+  "google-chrome",
+  "google-chrome-stable",
+  "chromium",
+  "chromium-browser",
+].filter(Boolean);
+
+let chrome;
+for (const candidate of candidates) {
+  const probe = spawnSync(candidate, ["--version"], { encoding: "utf8" });
+  if (probe.status === 0) {
+    chrome = candidate;
+    break;
+  }
+}
+
+if (!chrome) {
+  console.error("R3 browser gate failed closed: no supported Chrome/Chromium executable found.");
+  process.exit(1);
+}
+
+const result = spawnSync(
+  chrome,
+  [
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-gpu",
+    "--allow-file-access-from-files",
+    "--virtual-time-budget=10000",
+    "--dump-dom",
+    pathToFileURL(fixturePath).href,
+  ],
+  {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 20000,
+    maxBuffer: 16 * 1024 * 1024,
+  },
+);
+
+if (result.error) {
+  console.error("R3 browser gate failed to execute Chrome:", result.error.message);
+  process.exit(1);
+}
+
+if (result.status !== 0) {
+  console.error("R3 browser gate Chrome exit code:", result.status);
+  console.error(result.stderr?.slice(-4000) ?? "");
+  process.exit(1);
+}
+
+const dom = result.stdout ?? "";
+if (!dom.includes('data-render-pass="true"') || !dom.includes("<svg")) {
+  console.error("R3 browser gate failed: OSMD did not produce a verified SVG render.");
+  console.error(dom.slice(-6000));
+  process.exit(1);
+}
+
+console.log(`R3 browser fixture PASS using ${chrome}`);
