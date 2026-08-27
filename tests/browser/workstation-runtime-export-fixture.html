@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>R8-B4 Workstation runtime export fixture</title>
+  <style>body{margin:0}#st-score-root{width:960px}</style>
+</head>
+<body>
+  <div id="st-score-root"></div>
+  <div id="status" data-render-pass="false">R8_B4_PENDING</div>
+
+  <script src="../../dist/workstation-runtime/vendor/opensheetmusicdisplay.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "@st/score-renderer-contracts": "../../dist/workstation-runtime/modules/contracts.js",
+      "@st/score-renderer-core": "../../dist/workstation-runtime/modules/renderer-core.js",
+      "@st/score-renderer-osmd": "../../dist/workstation-runtime/modules/adapter-osmd.js",
+      "@st/score-renderer-browser-host": "../../dist/workstation-runtime/modules/browser-host.js",
+      "opensheetmusicdisplay": "../../dist/workstation-runtime/modules/osmd-module-shim.mjs"
+    }
+  }
+  </script>
+  <script type="module" src="../../dist/workstation-runtime/workstation-bootstrap.mjs"></script>
+  <script type="module">
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <work><work-title>R8-B4 Export Fixture</work-title></work>
+  <part-list>
+    <score-part id="P1"><part-name>Guitar</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>1</duration><type>quarter</type>
+      </note>
+      <note>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>1</duration><type>quarter</type>
+      </note>
+      <note><rest/><duration>2</duration><type>half</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const status = document.getElementById("status");
+    const score = document.getElementById("st-score-root");
+
+    (async () => {
+      try {
+        if (document.documentElement.dataset.stScoreRuntimeReady !== "true") {
+          throw new Error("exported runtime did not become ready before fixture execution");
+        }
+
+        const host = globalThis.__ST_SCORE_RENDER_HOST__;
+        const shell = globalThis.__ST_WORKSTATION_SCORE_SHELL__;
+        if (!host || typeof host.renderMusicXml !== "function") {
+          throw new Error("ST runtime host was not installed");
+        }
+        if (!shell || typeof shell.render !== "function") {
+          throw new Error("Workstation shell bridge was not installed");
+        }
+
+        const result = await host.renderMusicXml({
+          ticket: "1",
+          contractVersion: "0.2.0",
+          musicxml: xml,
+          pageMode: "continuous",
+          autoResize: false,
+          drawTitle: false,
+          drawComposer: false,
+        });
+        if (result.contractVersion !== "0.2.0") {
+          throw new Error(`unexpected render result contract ${result.contractVersion}`);
+        }
+
+        const svgPages = await host.exportSvg();
+        if (svgPages.length === 0 || !score.querySelector("svg")) {
+          throw new Error("exported runtime produced no SVG");
+        }
+
+        let mismatchRejected = false;
+        try {
+          await host.renderMusicXml({
+            ticket: "2",
+            contractVersion: "0.1.0",
+            musicxml: xml,
+            pageMode: "continuous",
+            autoResize: false,
+            drawTitle: false,
+            drawComposer: false,
+          });
+        } catch {
+          mismatchRejected = true;
+        }
+        if (!mismatchRejected) {
+          throw new Error("runtime did not reject contract mismatch");
+        }
+        if (score.querySelector("svg")) {
+          throw new Error("stale SVG remained visible after contract mismatch");
+        }
+
+        await host.renderMusicXml({
+          ticket: "3",
+          contractVersion: "0.2.0",
+          musicxml: xml,
+          pageMode: "page",
+          autoResize: false,
+          drawTitle: false,
+          drawComposer: false,
+        });
+        if (!score.querySelector("svg")) {
+          throw new Error("runtime failed to recover after fail-closed mismatch clearing");
+        }
+
+        status.dataset.contractVersion = "0.2.0";
+        status.dataset.mismatchRejected = "true";
+        status.dataset.staleSvgCleared = "true";
+        status.dataset.renderPass = "true";
+        status.textContent = "R8_B4_PASS";
+      } catch (error) {
+        score.replaceChildren();
+        status.dataset.renderPass = "false";
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "R8_B4_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>

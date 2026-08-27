@@ -70,6 +70,43 @@ Accessibility application is fail-closed in two phases: every semantic entry is 
 
 Consumer repositories remain unchanged through R7. Cross-repository adoption begins only at the explicit R8 integration gate.
 
+## R8-B4 Workstation offline runtime delivery
+
+R8-B4 introduces a renderer-owned **build-time export**, not a new consumer/vendor dependency. `scripts/export-workstation-runtime.mjs` assembles the already-built ST browser host, contracts, renderer core and OSMD adapter with the exact installed OSMD browser bundle into `dist/workstation-runtime`.
+
+The exported directory is a self-contained presentation asset boundary:
+
+```text
+st-score-rendering-layer
+        |
+        | build-time export
+        v
+ST-owned Workstation runtime
+  |- index.html
+  |- workstation-bootstrap.mjs
+  |- modules/contracts.js
+  |- modules/renderer-core.js
+  |- modules/adapter-osmd.js
+  |- modules/browser-host.js
+  |- vendor/opensheetmusicdisplay.min.js
+  |- licenses/opensheetmusicdisplay-BSD-3-Clause.txt
+  `- runtime-manifest.json
+        |
+        | consumer embeds local assets
+        v
+ST Music Workstation presentation/WebView boundary
+```
+
+The Workstation must consume this directory as opaque ST-owned presentation assets. It must not import `opensheetmusicdisplay`, depend on OSMD types, load MusicXML by URL, or expose vendor objects across the consumer boundary. OSMD remains physically present only as a renderer-owned vendor runtime asset behind the ST adapter.
+
+`runtime-manifest.json` records the renderer source revision, ST contract version, package versions, exact OSMD version/license metadata, byte sizes and SHA-256 digests for exported assets. A consumer integration must pin a full renderer commit SHA and verify that the exported manifest reports that same revision before embedding the assets. A moving branch, tag-only reference or unverified runtime directory is not an acceptable production input.
+
+The exported runtime installs the ST-owned Workstation bridge on top of `BrowserScoreHost`. It accepts only bounded in-memory MusicXML and ST render options, rejects contract mismatch or malformed replacement requests, clears stale presentation state before/after failed replacement, rejects concurrent replacement, and exposes no filesystem, shell, network, audio, MIDI, plugin or AI authority.
+
+Runtime page policy is offline-first: the generated CSP sets `connect-src 'none'`, and all JavaScript/module/vendor inputs are local files in the export. The exporter performs no download or package installation; dependency acquisition remains outside this runtime assembly step.
+
+R8-B4 renderer evidence requires both the export/security unit contract and a real Chrome/Chromium fixture that loads the exported asset graph, renders real MusicXML to SVG, proves contract-mismatch stale-output clearing, and proves recovery with a subsequent valid render. Consumer-side WebView embedding is a separate proof and must not weaken these renderer gates.
+
 ## Capability policy
 
 A feature may be advertised only after its adapter behavior and the relevant real-runtime fixture are tested.
@@ -99,8 +136,13 @@ The R6 baseline is tied to the committed fixture and exact OSMD version. A diges
 - Accessibility maps are size-bounded and duplicate semantic/DOM targets are rejected.
 - Accessibility target resolution completes before DOM mutation; previous ARIA/tabindex state is restored on clear/dispose.
 - Accessibility bridge installs no network, parser, speech, AI, plugin or keyboard-event execution path.
+- R8-B4 exported browser runtime disables page connections through CSP and contains no runtime network loader.
+- R8-B4 runtime output names are bounded simple directory names; path traversal is rejected.
+- R8-B4 replacement errors clear stale rendered output before control returns to the consumer.
 - Renderer code must never enter realtime audio callback paths.
 
 ## Dependency direction
 
 Dependency arrows may only point inward toward contracts/core and outward from adapters to their vendor. A consumer-to-OSMD edge is an architecture violation. Accessibility depends only on ST references and injected rendered-target resolvers; OSMD remains an implementation detail of the adapter layer rather than the semantic authority.
+
+The R8-B4 exported runtime does not change dependency direction: it packages an existing renderer-owned vendor edge for local delivery. Consumers depend on the ST runtime boundary and its manifest, not on OSMD as a source/API dependency.
