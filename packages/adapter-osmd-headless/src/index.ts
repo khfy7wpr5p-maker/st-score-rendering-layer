@@ -45,7 +45,11 @@ const MAX_TIMEOUT_MS = 120_000;
 const MAX_BROWSER_OUTPUT_BYTES = 32 * 1024 * 1024;
 
 function safeJson(value: unknown): string {
-  return JSON.stringify(value)
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("Value cannot be serialized for the headless renderer.");
+  }
+  return serialized
     .replace(/</g, "\\u003c")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
@@ -97,7 +101,7 @@ function buildFixtureHtml(source: ScoreSource, options: ScoreRenderOptions, osmd
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; style-src 'unsafe-inline'; img-src data: file:; font-src data: file:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; style-src 'unsafe-inline'; img-src data:; font-src data: file:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'" />
   <title>ST headless score render</title>
   <style>html,body{margin:0;padding:0}#score{width:960px}</style>
 </head>
