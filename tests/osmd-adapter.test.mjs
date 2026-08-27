@@ -83,12 +83,11 @@ async function loadAndRender(renderer) {
   return renderer.render();
 }
 
-test("OSMD adapter exposes only tested R4 capabilities", () => {
+test("OSMD adapter exposes only capabilities proven through R5", () => {
   const { renderer } = createHarness();
-  for (const capability of ["musicxml-render", "svg-export", "cursor", "note-highlight", "part-visibility"]) {
+  for (const capability of ["musicxml-render", "svg-export", "cursor", "note-highlight", "part-visibility", "tablature"]) {
     assert.equal(renderer.capabilities.has(capability), true);
   }
-  assert.equal(renderer.capabilities.has("tablature"), false);
   assert.equal(renderer.capabilities.has("headless"), false);
 });
 
