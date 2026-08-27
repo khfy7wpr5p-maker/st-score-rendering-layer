@@ -44,7 +44,7 @@ const DEFAULT_RENDERER_FACTORY: BrowserRendererFactory = (container) => new Osmd
  * ST renderer adapter boundary. It does not grant filesystem, network, project,
  * transport, MIDI, audio, plugin, AI, or realtime authority.
  */
-export class BrowserScoreHost final {
+export class BrowserScoreHost {
   readonly #container: HTMLElement;
   readonly #expectedContractVersion: string;
   readonly #rendererFactory: BrowserRendererFactory;
