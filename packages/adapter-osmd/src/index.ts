@@ -12,16 +12,32 @@ import {
 } from "@st/score-renderer-contracts";
 import { UnsupportedRendererCapabilityError, validateScoreSource } from "@st/score-renderer-core";
 
-const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set(["musicxml-render", "svg-export", "tablature"]);
+export interface OsmdEngine {
+  load(content: string): Promise<unknown>;
+  setOptions(options: Record<string, unknown>): void;
+  render(): void;
+}
+
+export type OsmdFactory = (container: HTMLElement) => OsmdEngine;
+
+const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set(["musicxml-render", "svg-export"]);
+
+function createDefaultOsmd(container: HTMLElement): OsmdEngine {
+  return new OpenSheetMusicDisplay(container, { autoResize: true, backend: "svg" });
+}
 
 export class OsmdRenderer implements ScoreRenderer {
   readonly id = "osmd";
   readonly capabilities = CAPABILITIES;
   readonly #container: HTMLElement;
-  #osmd: OpenSheetMusicDisplay | undefined;
+  readonly #factory: OsmdFactory;
+  #osmd: OsmdEngine | undefined;
   #loaded = false;
 
-  constructor(container: HTMLElement) { this.#container = container; }
+  constructor(container: HTMLElement, factory: OsmdFactory = createDefaultOsmd) {
+    this.#container = container;
+    this.#factory = factory;
+  }
 
   async load(source: ScoreSource): Promise<void> {
     validateScoreSource(source);
@@ -46,10 +62,22 @@ export class OsmdRenderer implements ScoreRenderer {
   async exportSvg(): Promise<readonly string[]> {
     return [...this.#container.querySelectorAll("svg")].map((node) => node.outerHTML);
   }
-  async highlight(_highlight: ScoreHighlight): Promise<void> { throw new UnsupportedRendererCapabilityError("note-highlight"); }
-  async clearHighlights(): Promise<void> { throw new UnsupportedRendererCapabilityError("note-highlight"); }
-  async moveCursor(_target: ScoreMeasureRef): Promise<void> { throw new UnsupportedRendererCapabilityError("cursor"); }
-  async setPartVisible(_part: ScorePartRef, _visible: boolean): Promise<void> { throw new UnsupportedRendererCapabilityError("part-visibility"); }
+
+  async highlight(_highlight: ScoreHighlight): Promise<void> {
+    throw new UnsupportedRendererCapabilityError("note-highlight");
+  }
+
+  async clearHighlights(): Promise<void> {
+    throw new UnsupportedRendererCapabilityError("note-highlight");
+  }
+
+  async moveCursor(_target: ScoreMeasureRef): Promise<void> {
+    throw new UnsupportedRendererCapabilityError("cursor");
+  }
+
+  async setPartVisible(_part: ScorePartRef, _visible: boolean): Promise<void> {
+    throw new UnsupportedRendererCapabilityError("part-visibility");
+  }
 
   async dispose(): Promise<void> {
     this.#container.replaceChildren();
@@ -57,10 +85,8 @@ export class OsmdRenderer implements ScoreRenderer {
     this.#loaded = false;
   }
 
-  #ensureOsmd(): OpenSheetMusicDisplay {
-    if (this.#osmd === undefined) {
-      this.#osmd = new OpenSheetMusicDisplay(this.#container, { autoResize: true, backend: "svg" });
-    }
+  #ensureOsmd(): OsmdEngine {
+    if (this.#osmd === undefined) this.#osmd = this.#factory(this.#container);
     return this.#osmd;
   }
 }
