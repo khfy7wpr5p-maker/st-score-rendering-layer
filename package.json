@@ -11,5 +11,8 @@
     "test": "npm run build && node --test tests/*.test.mjs",
     "check": "npm run typecheck && npm test"
   },
-  "devDependencies": {"typescript": "6.0.3"}
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "6.0.3"
+  }
 }
