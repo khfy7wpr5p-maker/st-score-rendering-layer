@@ -48,7 +48,7 @@ Owns every import from `opensheetmusicdisplay` and maps ST options to OSMD. Cons
 
 ## Capability policy
 
-A feature may be advertised only after an adapter implements and tests it. R2 advertises `musicxml-render`, `svg-export`, and `tablature` for existing MusicXML TAB content. Cursor, note highlighting, part visibility and headless rendering remain unavailable until later stages.
+A feature may be advertised only after the adapter boundary implements and tests it. R2 advertises only `musicxml-render` and `svg-export` at the adapter-contract level. Real OSMD browser rendering is still gated by R3. `tablature` is intentionally withheld until the R5 guitar-TAB fixture gate. Cursor, note highlighting, part visibility and headless rendering remain unavailable until later stages.
 
 ## Dependency direction
 
