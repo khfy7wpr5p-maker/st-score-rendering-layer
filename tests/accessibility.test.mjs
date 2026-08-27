@@ -2,13 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ScoreAccessibilityBridge } from "../packages/accessibility/dist/index.js";
 
-function createElement(initial = {}) {
+function createElement(initial = {}, throwOnAttribute) {
   const attrs = new Map(Object.entries(initial));
   return {
     focusCount: 0,
     hasAttribute(name) { return attrs.has(name); },
     getAttribute(name) { return attrs.get(name) ?? null; },
-    setAttribute(name, value) { attrs.set(name, String(value)); },
+    setAttribute(name, value) {
+      if (name === throwOnAttribute) throw new Error(`synthetic setAttribute failure for ${name}`);
+      attrs.set(name, String(value));
+    },
     removeAttribute(name) { attrs.delete(name); },
     focus() { this.focusCount += 1; },
   };
@@ -61,6 +64,21 @@ test("R7 accessibility bridge is transactional when a rendered target is missing
   assert.equal(bridge.size, 0);
 });
 
+test("R7 accessibility bridge rolls back the current target if DOM mutation throws", () => {
+  const element = createElement({ "aria-label": "existing" }, "role");
+  const bridge = new ScoreAccessibilityBridge(() => element);
+
+  assert.throws(
+    () => bridge.apply([{ target: note0, label: "temporary" }]),
+    /synthetic setAttribute failure/,
+  );
+  assert.equal(element.getAttribute("aria-label"), "existing");
+  assert.equal(element.getAttribute("role"), null);
+  assert.equal(element.getAttribute("tabindex"), null);
+  assert.equal(element.getAttribute("data-st-score-a11y"), null);
+  assert.equal(bridge.size, 0);
+});
+
 test("R7 accessibility bridge rejects duplicate targets, shared DOM targets and unsafe labels", () => {
   const element = createElement();
   const bridge = new ScoreAccessibilityBridge(() => element);
@@ -82,6 +100,10 @@ test("R7 accessibility bridge rejects duplicate targets, shared DOM targets and 
   assert.throws(
     () => bridge.apply([{ target: note0, label: "bad\nlabel" }]),
     /control characters/,
+  );
+  assert.throws(
+    () => bridge.apply([{ target: { ...note0, partId: " P1" }, label: "Do" }]),
+    /no surrounding whitespace/,
   );
 });
 
