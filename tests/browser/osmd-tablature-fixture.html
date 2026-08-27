@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>R5 OSMD tablature fixture</title>
+  <style>body{margin:0}#score{width:960px}</style>
+</head>
+<body>
+  <div id="score"></div>
+  <div id="status" data-render-pass="false">R5_PENDING</div>
+  <script src="../../node_modules/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+  <script>
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <work><work-title>R5 Guitar TAB Fixture</work-title></work>
+  <part-list>
+    <score-part id="P1"><part-name>Guitar</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>TAB</sign><line>5</line></clef>
+        <staff-details number="2">
+          <staff-lines>6</staff-lines>
+          <staff-tuning line="1"><tuning-step>E</tuning-step><tuning-octave>2</tuning-octave></staff-tuning>
+          <staff-tuning line="2"><tuning-step>A</tuning-step><tuning-octave>2</tuning-octave></staff-tuning>
+          <staff-tuning line="3"><tuning-step>D</tuning-step><tuning-octave>3</tuning-octave></staff-tuning>
+          <staff-tuning line="4"><tuning-step>G</tuning-step><tuning-octave>3</tuning-octave></staff-tuning>
+          <staff-tuning line="5"><tuning-step>B</tuning-step><tuning-octave>3</tuning-octave></staff-tuning>
+          <staff-tuning line="6"><tuning-step>E</tuning-step><tuning-octave>4</tuning-octave></staff-tuning>
+        </staff-details>
+      </attributes>
+      <note>
+        <pitch><step>B</step><octave>4</octave></pitch>
+        <duration>2</duration><voice>1</voice><type>half</type><staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>5</octave></pitch>
+        <duration>2</duration><voice>1</voice><type>half</type><staff>1</staff>
+      </note>
+      <backup><duration>4</duration></backup>
+      <note>
+        <pitch><step>B</step><octave>4</octave></pitch>
+        <duration>2</duration><voice>5</voice><type>half</type><staff>2</staff>
+        <notations><technical><string>1</string><fret>7</fret></technical></notations>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>5</octave></pitch>
+        <duration>2</duration><voice>5</voice><type>half</type><staff>2</staff>
+        <notations><technical><string>1</string><fret>12</fret></technical></notations>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    (async () => {
+      const status = document.getElementById("status");
+      try {
+        if (!window.opensheetmusicdisplay?.OpenSheetMusicDisplay) {
+          throw new Error("OSMD browser global is unavailable");
+        }
+        const osmd = new window.opensheetmusicdisplay.OpenSheetMusicDisplay("score", {
+          autoResize: false,
+          backend: "svg",
+          drawTitle: false,
+          drawComposer: false,
+        });
+        await osmd.load(xml);
+        osmd.render();
+
+        const instrument = osmd.Sheet?.Instruments?.find((candidate) => candidate.IdString === "P1");
+        if (!instrument) throw new Error("Guitar instrument P1 was not parsed");
+        const tabStaves = (instrument.Staves ?? []).filter((staff) => staff.isTab === true);
+        if (tabStaves.length !== 1) throw new Error(`Expected exactly one TAB staff, got ${tabStaves.length}`);
+        if (tabStaves[0].StafflineCount !== 6) {
+          throw new Error(`Expected six TAB staff lines, got ${tabStaves[0].StafflineCount}`);
+        }
+
+        const svg = document.querySelector("#score svg");
+        if (!svg) throw new Error("OSMD produced no SVG score");
+        const textValues = [...svg.querySelectorAll("text")]
+          .map((node) => (node.textContent ?? "").trim())
+          .filter(Boolean);
+        if (!textValues.includes("7") || !textValues.includes("12")) {
+          throw new Error(`Expected fret labels 7 and 12 in rendered TAB; got ${textValues.join(",")}`);
+        }
+
+        status.dataset.tabStaffPass = "true";
+        status.dataset.tabFretPass = "true";
+        status.dataset.renderPass = "true";
+        status.textContent = "R5_PASS";
+      } catch (error) {
+        status.dataset.renderPass = "false";
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "R5_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>
