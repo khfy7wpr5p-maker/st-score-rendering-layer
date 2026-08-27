@@ -57,8 +57,8 @@ A feature may be advertised only after its adapter behavior and the relevant rea
 - R2 established `musicxml-render` and `svg-export` at the adapter contract boundary.
 - R3 proved real OSMD 2.1.2 MusicXML-to-SVG rendering in Chrome/Chromium.
 - R4 advertises `cursor`, `note-highlight` and `part-visibility` after unit tests plus real-browser evidence for the underlying OSMD cursor, graphical-note SVG and instrument visibility primitives.
+- R5 advertises `tablature` only after a real-browser guitar fixture proves an OSMD `Staff.isTab` staff with six lines and renders distinct fret labels from MusicXML technical string/fret data.
 - Note highlighting is ST-owned, reversible SVG state; it must not overwrite source/MusicXML note colors.
-- `tablature` remains withheld until the R5 guitar-TAB fixture gate.
 - `headless` remains withheld until the R6 headless/visual-regression gate.
 - Accessibility semantics remain ST-owned and are introduced at R7; rendered SVG must not become the authoritative semantic score model.
 
