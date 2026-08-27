@@ -50,6 +50,7 @@ export class BrowserScoreHost {
   readonly #rendererFactory: BrowserRendererFactory;
   #renderer: ScoreRenderer | undefined;
   #disposed = false;
+  #renderInFlight = false;
 
   constructor(container: HTMLElement, options: BrowserScoreHostOptions) {
     if (typeof container?.replaceChildren !== "function") {
@@ -77,46 +78,62 @@ export class BrowserScoreHost {
     sourceId?: string,
   ): Promise<ScoreRenderResult> {
     this.#requireAvailable();
-
-    const source: ScoreSource = sourceId === undefined
-      ? { kind: "musicxml", content }
-      : { kind: "musicxml", content, sourceId };
-
-    try {
-      validateScoreSource(source);
-    } catch (error) {
-      await this.#resetCurrentRenderer();
-      throw error;
+    if (this.#renderInFlight) {
+      throw new BrowserScoreHostUnavailableError(
+        "A score render is already in progress; concurrent replacement is not allowed.",
+      );
     }
-
-    await this.#resetCurrentRenderer();
+    this.#renderInFlight = true;
 
     try {
-      const renderer = this.#rendererFactory(this.#container);
-      this.#renderer = renderer;
-      if (!renderer.capabilities.has("musicxml-render") || !renderer.capabilities.has("svg-export")) {
-        throw new BrowserScoreHostUnavailableError(
-          "Selected renderer does not provide the required browser-host capabilities.",
-        );
+      const source: ScoreSource = sourceId === undefined
+        ? { kind: "musicxml", content }
+        : { kind: "musicxml", content, sourceId };
+
+      try {
+        validateScoreSource(source);
+      } catch (error) {
+        await this.#resetCurrentRenderer();
+        throw error;
       }
 
-      await renderer.load(source);
-      const result = await renderer.render(options);
-      if (result.contractVersion !== this.#expectedContractVersion) {
-        throw new ScoreRendererContractVersionMismatchError(
-          this.#expectedContractVersion,
-          result.contractVersion,
-        );
-      }
-      return result;
-    } catch (error) {
       await this.#resetCurrentRenderer();
-      throw error;
+      this.#requireAvailable();
+
+      try {
+        const renderer = this.#rendererFactory(this.#container);
+        this.#renderer = renderer;
+        if (!renderer.capabilities.has("musicxml-render") || !renderer.capabilities.has("svg-export")) {
+          throw new BrowserScoreHostUnavailableError(
+            "Selected renderer does not provide the required browser-host capabilities.",
+          );
+        }
+
+        await renderer.load(source);
+        this.#requireAvailable();
+        const result = await renderer.render(options);
+        this.#requireAvailable();
+        if (result.contractVersion !== this.#expectedContractVersion) {
+          throw new ScoreRendererContractVersionMismatchError(
+            this.#expectedContractVersion,
+            result.contractVersion,
+          );
+        }
+        return result;
+      } catch (error) {
+        await this.#resetCurrentRenderer();
+        throw error;
+      }
+    } finally {
+      this.#renderInFlight = false;
     }
   }
 
   async exportSvg(): Promise<readonly string[]> {
     this.#requireAvailable();
+    if (this.#renderInFlight) {
+      throw new BrowserScoreHostUnavailableError("SVG export is unavailable while rendering is in progress.");
+    }
     const renderer = this.#renderer;
     if (renderer === undefined) {
       throw new BrowserScoreHostUnavailableError("A score must be rendered before SVG export.");
