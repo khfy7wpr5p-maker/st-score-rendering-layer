@@ -5,11 +5,12 @@
   "workspaces": ["packages/*"],
   "engines": {"node": ">=20.19.0"},
   "scripts": {
-    "clean": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd --clean",
-    "build": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd",
-    "typecheck": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd --pretty false",
+    "clean": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd packages/adapter-osmd-headless --clean",
+    "build": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd packages/adapter-osmd-headless",
+    "typecheck": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd packages/adapter-osmd-headless --pretty false",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:browser": "node tests/browser/run-osmd-browser-fixture.mjs",
+    "test:headless": "node tests/headless/run-osmd-headless-gate.mjs",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
