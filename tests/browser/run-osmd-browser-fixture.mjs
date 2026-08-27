@@ -38,6 +38,7 @@ for (const fixture of fixtures) {
       "--headless=new",
       "--no-sandbox",
       "--disable-gpu",
+      "--disable-dev-shm-usage",
       "--allow-file-access-from-files",
       "--virtual-time-budget=10000",
       "--dump-dom",
@@ -46,7 +47,7 @@ for (const fixture of fixtures) {
     {
       cwd: repoRoot,
       encoding: "utf8",
-      timeout: 20000,
+      timeout: 45000,
       maxBuffer: 16 * 1024 * 1024,
     },
   );
