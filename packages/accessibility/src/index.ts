@@ -57,8 +57,13 @@ function requireNonNegativeInteger(value: number, label: string): void {
 
 function requireSafePartId(partId: string): string {
   const normalized = partId.trim();
-  if (normalized.length === 0 || normalized.length > 256 || CONTROL_CHARACTER_PATTERN.test(normalized)) {
-    throw new Error("Accessibility target partId must contain 1-256 printable characters.");
+  if (
+    normalized.length === 0 ||
+    normalized.length > 256 ||
+    normalized !== partId ||
+    CONTROL_CHARACTER_PATTERN.test(normalized)
+  ) {
+    throw new Error("Accessibility target partId must contain 1-256 printable characters with no surrounding whitespace.");
   }
   return normalized;
 }
@@ -187,11 +192,13 @@ export class ScoreAccessibilityBridge {
           tabindex: snapshotAttribute(target.element, "tabindex"),
           marker: snapshotAttribute(target.element, "data-st-score-a11y"),
         };
+        // Register the snapshot before the first mutation so even a throwing DOM
+        // implementation cannot leave a partially-applied accessibility overlay.
+        applied.push(snapshot);
         target.element.setAttribute("aria-label", target.label);
         target.element.setAttribute("role", "img");
         target.element.setAttribute("tabindex", target.focusable ? "0" : "-1");
         target.element.setAttribute("data-st-score-a11y", "true");
-        applied.push(snapshot);
       }
     } catch (error) {
       for (const target of applied.reverse()) restoreTarget(target);
