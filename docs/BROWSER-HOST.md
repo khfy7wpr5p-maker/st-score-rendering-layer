@@ -56,6 +56,8 @@ A browser score is presentation state, not authoritative musical state. To avoid
 
 A failed replacement therefore leaves an empty presentation surface rather than a misleading old score.
 
+Only one replacement render may be in flight at a time. A concurrent `renderMusicXml()` request is rejected without disposing the active renderer or mutating its presentation state. SVG export is also rejected while rendering is in progress. If the host is disposed during an in-flight load/render, availability is rechecked before later render phases so the stale operation cannot be accepted as a successful completion.
+
 ## Browser evidence
 
 `tests/browser/osmd-browser-host-fixture.html` exercises the real chain in Chrome/Chromium:
@@ -66,6 +68,8 @@ A failed replacement therefore leaves an empty presentation surface rather than 
 - exported/runtime contract is `0.2.0`;
 - invalid replacement input removes the previously rendered SVG;
 - a later valid request can recover and render again.
+
+Unit/contract coverage additionally verifies concurrent replacement rejection, disposal during an in-flight render, capability failure, runtime-result contract mismatch, and the absence of direct vendor/network/message-transport authority in the browser-host package.
 
 The fixture's OSMD global/module shim is renderer-internal test plumbing only. It is not part of the consumer API.
 
