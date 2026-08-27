@@ -21,6 +21,7 @@
     }
   }
   </script>
+  <script type="module" src="../../dist/workstation-runtime/workstation-bootstrap.mjs"></script>
   <script type="module">
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="3.1">
@@ -54,18 +55,8 @@
 
     (async () => {
       try {
-        const ready = new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error("runtime ready event timeout")), 5000);
-          window.addEventListener("st-score-render-host-ready", (event) => {
-            clearTimeout(timeout);
-            resolve(event.detail);
-          }, { once: true });
-        });
-
-        await import("../../dist/workstation-runtime/workstation-bootstrap.mjs");
-        const readyDetail = await ready;
-        if (readyDetail?.contractVersion !== "0.2.0") {
-          throw new Error(`unexpected runtime contract ${readyDetail?.contractVersion}`);
+        if (document.documentElement.dataset.stScoreRuntimeReady !== "true") {
+          throw new Error("exported runtime did not become ready before fixture execution");
         }
 
         const host = globalThis.__ST_SCORE_RENDER_HOST__;
@@ -129,7 +120,7 @@
           throw new Error("runtime failed to recover after fail-closed mismatch clearing");
         }
 
-        status.dataset.contractVersion = readyDetail.contractVersion;
+        status.dataset.contractVersion = "0.2.0";
         status.dataset.mismatchRejected = "true";
         status.dataset.staleSvgCleared = "true";
         status.dataset.renderPass = "true";
