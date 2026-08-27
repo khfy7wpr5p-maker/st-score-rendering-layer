@@ -78,6 +78,7 @@ const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
   "cursor",
   "note-highlight",
   "part-visibility",
+  "tablature",
 ]);
 const DEFAULT_HIGHLIGHT_CLASS = "st-score-highlight";
 const HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
