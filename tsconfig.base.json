@@ -12,8 +12,8 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": false,
     "paths": {
-      "@st/score-renderer-contracts": ["packages/contracts/src/index.ts"],
-      "@st/score-renderer-core": ["packages/renderer-core/src/index.ts"]
+      "@st/score-renderer-contracts": ["./packages/contracts/src/index.ts"],
+      "@st/score-renderer-core": ["./packages/renderer-core/src/index.ts"]
     }
   }
 }
