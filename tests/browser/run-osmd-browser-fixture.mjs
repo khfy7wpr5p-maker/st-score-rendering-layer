@@ -7,6 +7,7 @@ const fixtures = [
   "osmd-browser-fixture.html",
   "osmd-interaction-fixture.html",
   "osmd-tablature-fixture.html",
+  "osmd-accessibility-fixture.html",
 ];
 
 const candidates = [
