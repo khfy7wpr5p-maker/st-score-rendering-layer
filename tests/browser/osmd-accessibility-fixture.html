@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>R7 OSMD accessibility fixture</title></head>
+<body>
+  <div id="score"></div>
+  <div id="status" data-render-pass="false">R7_PENDING</div>
+  <script src="../../node_modules/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+  <script type="module">
+    import { ScoreAccessibilityBridge } from "../../packages/accessibility/dist/index.js";
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice></note>
+      <note><rest/><duration>2</duration><type>half</type><voice>1</voice></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    (async () => {
+      const status = document.getElementById("status");
+      try {
+        const OSMD = window.opensheetmusicdisplay?.OpenSheetMusicDisplay;
+        if (!OSMD) throw new Error("OSMD browser global is unavailable");
+        const osmd = new OSMD("score", { autoResize: false, backend: "svg", drawTitle: false, drawComposer: false });
+        await osmd.load(xml);
+        osmd.render();
+
+        function resolveNote(target) {
+          const instrument = osmd.Sheet.Instruments.find((candidate) => candidate.IdString === target.partId);
+          if (!instrument) return undefined;
+          const renderedMeasure = osmd.graphic.measureList[target.measureIndex];
+          if (!renderedMeasure) return undefined;
+          const notes = [];
+          const staffIds = instrument.Staves.map((staff) => staff.idInMusicSheet).sort((a, b) => a - b);
+          for (const staffId of staffIds) {
+            const graphicalMeasure = renderedMeasure[staffId];
+            for (const staffEntry of graphicalMeasure?.staffEntries ?? []) {
+              for (const voiceEntry of staffEntry.graphicalVoiceEntries ?? []) {
+                notes.push(...(voiceEntry.notes ?? []));
+              }
+            }
+          }
+          return notes[target.noteIndex]?.getSVGGElement?.();
+        }
+
+        const firstRef = { partId: "P1", measureIndex: 0, noteIndex: 0 };
+        const secondRef = { partId: "P1", measureIndex: 0, noteIndex: 1 };
+        const firstElement = resolveNote(firstRef);
+        const secondElement = resolveNote(secondRef);
+        if (!firstElement || !secondElement) throw new Error("real OSMD note targets could not be resolved");
+
+        firstElement.setAttribute("aria-label", "legacy-label");
+        const bridge = new ScoreAccessibilityBridge(resolveNote);
+        const result = bridge.apply([
+          { target: firstRef, label: "Do dörtlük, birinci ölçü" },
+          { target: secondRef, label: "Re dörtlük, birinci ölçü" },
+        ]);
+        if (result.count !== 2) throw new Error("accessibility bridge did not apply both semantic targets");
+        if (firstElement.getAttribute("aria-label") !== "Do dörtlük, birinci ölçü") throw new Error("ARIA label was not applied");
+        if (firstElement.getAttribute("role") !== "img") throw new Error("ARIA role was not applied");
+        if (firstElement.getAttribute("tabindex") !== "0") throw new Error("keyboard focus marker was not applied");
+        if (firstElement.getAttribute("data-st-score-a11y") !== "true") throw new Error("ST accessibility marker was not applied");
+
+        if (!bridge.focusNext()) throw new Error("first semantic focus move failed");
+        if (document.activeElement !== firstElement) throw new Error("first rendered note did not receive focus");
+        if (!bridge.focusNext()) throw new Error("second semantic focus move failed");
+        if (document.activeElement !== secondElement) throw new Error("second rendered note did not receive focus");
+        if (bridge.focusNext()) throw new Error("focus order moved past the semantic map boundary");
+
+        bridge.clear();
+        if (firstElement.getAttribute("aria-label") !== "legacy-label") throw new Error("pre-existing ARIA label was not restored");
+        if (firstElement.hasAttribute("data-st-score-a11y")) throw new Error("ST accessibility marker was not cleared");
+
+        if (!document.querySelector("#score svg")) throw new Error("R7 render produced no SVG");
+        status.dataset.renderPass = "true";
+        status.textContent = "R7_PASS";
+      } catch (error) {
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "R7_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>

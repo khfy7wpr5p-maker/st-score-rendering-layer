@@ -156,15 +156,25 @@ export class OsmdRenderer implements ScoreRenderer {
     return [...this.#container.querySelectorAll("svg")].map((node) => node.outerHTML);
   }
 
+  /**
+   * Adapter-specific rendered-target resolver for ST-owned presentation helpers such as
+   * the accessibility bridge. It exposes only a DOM Element, never an OSMD model object.
+   */
+  resolveRenderedNoteElement(target: ScoreNoteRef): Element {
+    this.#requireRendered("resolveRenderedNoteElement()");
+    const graphicalNote = this.#resolveGraphicalNote(target);
+    const element = graphicalNote.getSVGGElement?.();
+    if (!element) throw new Error("The selected note has no SVG element in the rendered score.");
+    return element;
+  }
+
   async highlight(highlight: ScoreHighlight): Promise<void> {
     this.#requireRendered("highlight()");
     const className = highlight.className ?? DEFAULT_HIGHLIGHT_CLASS;
     if (!HIGHLIGHT_CLASS_PATTERN.test(className)) {
       throw new Error("Highlight className must be one safe CSS class token of at most 64 characters.");
     }
-    const graphicalNote = this.#resolveGraphicalNote(highlight.target);
-    const element = graphicalNote.getSVGGElement?.();
-    if (!element) throw new Error("The selected note has no SVG element to highlight.");
+    const element = this.resolveRenderedNoteElement(highlight.target);
     this.#ensureHighlightStyle();
     element.classList.add(className);
     element.setAttribute("data-st-score-highlight", "true");

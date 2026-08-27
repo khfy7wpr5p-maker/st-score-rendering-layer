@@ -153,6 +153,23 @@ test("R4 part visibility uses stable Instrument.IdString and rebuilds the graphi
   await assert.rejects(() => renderer.setPartVisible({ partId: "missing" }, false), /was not found/);
 });
 
+test("R7 rendered-note resolver exposes only the DOM target after render", async () => {
+  const { renderer, noteElement } = createHarness();
+  assert.throws(
+    () => renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 }),
+    /must be rendered/,
+  );
+  await loadAndRender(renderer);
+  assert.equal(
+    renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 }),
+    noteElement,
+  );
+  assert.throws(
+    () => renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 99, voice: 1 }),
+    /was not found/,
+  );
+});
+
 test("OSMD adapter exports SVG and disposes target", async () => {
   const { renderer, calls } = createHarness();
   assert.deepEqual(await renderer.exportSvg(), ["<svg id=\"a\"></svg>"]);
