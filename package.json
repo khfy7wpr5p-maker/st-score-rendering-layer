@@ -9,6 +9,7 @@
     "build": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd",
     "typecheck": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd --pretty false",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "test:browser": "node tests/browser/run-osmd-browser-fixture.mjs",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
