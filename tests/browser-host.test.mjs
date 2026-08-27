@@ -52,6 +52,14 @@ class FakeRenderer {
   }
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 test("browser host rejects runtime contract mismatch before renderer creation", () => {
   const container = new FakeContainer();
   let factoryCalls = 0;
@@ -154,6 +162,61 @@ test("missing required renderer capabilities fail closed", async () => {
     BrowserScoreHostUnavailableError,
   );
   assert.equal(renderer.disposed, true);
+});
+
+test("concurrent replacement is rejected without disposing the in-flight renderer", async () => {
+  const container = new FakeContainer();
+  const loadGate = deferred();
+  const renderer = new FakeRenderer();
+  renderer.load = async (source) => {
+    renderer.loadedSource = source;
+    await loadGate.promise;
+  };
+
+  const host = new BrowserScoreHost(container, {
+    expectedContractVersion: SCORE_RENDERER_CONTRACT_VERSION,
+    rendererFactory: () => renderer,
+  });
+
+  const firstRender = host.renderMusicXml("<score-partwise></score-partwise>");
+  await Promise.resolve();
+  const clearCountWhileInFlight = container.clearCount;
+
+  await assert.rejects(
+    () => host.renderMusicXml("<score-partwise version=\"4.0\"></score-partwise>"),
+    BrowserScoreHostUnavailableError,
+  );
+  await assert.rejects(() => host.exportSvg(), BrowserScoreHostUnavailableError);
+  assert.equal(renderer.disposed, false, "rejected concurrent request does not dispose the active renderer");
+  assert.equal(container.clearCount, clearCountWhileInFlight, "rejected concurrent request does not mutate presentation state");
+
+  loadGate.resolve();
+  const result = await firstRender;
+  assert.equal(result.contractVersion, SCORE_RENDERER_CONTRACT_VERSION);
+});
+
+test("dispose during an in-flight render prevents stale completion", async () => {
+  const container = new FakeContainer();
+  const loadGate = deferred();
+  const renderer = new FakeRenderer();
+  renderer.load = async (source) => {
+    renderer.loadedSource = source;
+    await loadGate.promise;
+  };
+
+  const host = new BrowserScoreHost(container, {
+    expectedContractVersion: SCORE_RENDERER_CONTRACT_VERSION,
+    rendererFactory: () => renderer,
+  });
+
+  const renderPromise = host.renderMusicXml("<score-partwise></score-partwise>");
+  await Promise.resolve();
+  await host.dispose();
+  assert.equal(renderer.disposed, true, "dispose terminates the active presentation renderer");
+
+  loadGate.resolve();
+  await assert.rejects(() => renderPromise, BrowserScoreHostUnavailableError);
+  await assert.rejects(() => host.exportSvg(), BrowserScoreHostUnavailableError);
 });
 
 test("disposed browser host cannot accept new rendering work", async () => {
