@@ -23,8 +23,10 @@ jobs:
           node-version: "22"
       - name: Install dependencies without lifecycle scripts
         run: npm install --ignore-scripts --no-audit --no-fund
-      - name: Typecheck, build and test
+      - name: Typecheck, build and unit tests
         run: npm run check
+      - name: R3 real browser MusicXML gate
+        run: npm run test:browser
       - name: Upload generated lockfile for review
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
