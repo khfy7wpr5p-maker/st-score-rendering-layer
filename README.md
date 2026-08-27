@@ -35,6 +35,7 @@ The renderer is a presentation boundary only. Editing, OMR, harmony analysis, MI
 - rejects empty input and NUL bytes before the vendor parser
 - OSMD is isolated to one package and pinned to an exact direct dependency version
 - unsupported features fail closed with explicit capability errors
+- TAB capability is not advertised until the dedicated R5 validation gate
 - consumer projects use capability detection rather than OSMD internals
 
 See `SECURITY.md` and `docs/ARCHITECTURE.md`.
