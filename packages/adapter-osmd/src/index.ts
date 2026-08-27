@@ -1,4 +1,4 @@
-import { OpenSheetMusicDisplay } from "opensheetmusicdisplay";
+import * as OsmdModule from "opensheetmusicdisplay";
 import {
   SCORE_RENDERER_CONTRACT_VERSION,
   type ScoreHighlight,
@@ -22,7 +22,21 @@ export type OsmdFactory = (container: HTMLElement) => OsmdEngine;
 
 const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set(["musicxml-render", "svg-export"]);
 
+type OsmdModuleShape = Partial<typeof OsmdModule> & {
+  default?: Partial<typeof OsmdModule>;
+};
+
+function resolveOpenSheetMusicDisplay(): typeof OsmdModule.OpenSheetMusicDisplay {
+  const moduleShape = OsmdModule as OsmdModuleShape;
+  const constructor = moduleShape.OpenSheetMusicDisplay ?? moduleShape.default?.OpenSheetMusicDisplay;
+  if (constructor === undefined) {
+    throw new Error("OpenSheetMusicDisplay constructor is unavailable from the installed OSMD module.");
+  }
+  return constructor;
+}
+
 function createDefaultOsmd(container: HTMLElement): OsmdEngine {
+  const OpenSheetMusicDisplay = resolveOpenSheetMusicDisplay();
   return new OpenSheetMusicDisplay(container, { autoResize: true, backend: "svg" });
 }
 
