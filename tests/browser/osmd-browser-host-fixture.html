@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>R8-B1 ST browser host fixture</title>
+  <style>body{margin:0}#score{width:960px}</style>
+</head>
+<body>
+  <div id="score"></div>
+  <div id="status" data-render-pass="false">R8_B1_PENDING</div>
+
+  <!-- Renderer-internal fixture plumbing only. Consumer code never imports OSMD. -->
+  <script src="../../node_modules/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "@st/score-renderer-contracts": "../../packages/contracts/dist/index.js",
+      "@st/score-renderer-core": "../../packages/renderer-core/dist/index.js",
+      "@st/score-renderer-osmd": "../../packages/adapter-osmd/dist/index.js",
+      "opensheetmusicdisplay": "./osmd-module-shim.mjs"
+    }
+  }
+  </script>
+  <script type="module">
+    import { SCORE_RENDERER_CONTRACT_VERSION } from "@st/score-renderer-contracts";
+    import {
+      BrowserScoreHost,
+      ScoreRendererContractVersionMismatchError,
+    } from "../../packages/browser-host/dist/index.js";
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <work><work-title>R8-B1 Fixture</work-title></work>
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration><type>quarter</type>
+      </note>
+      <note><rest/><duration>3</duration><type>half</type><dot/></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const status = document.getElementById("status");
+    const score = document.getElementById("score");
+
+    (async () => {
+      try {
+        let mismatchRejected = false;
+        try {
+          new BrowserScoreHost(score, { expectedContractVersion: "0.1.0" });
+        } catch (error) {
+          mismatchRejected = error instanceof ScoreRendererContractVersionMismatchError;
+        }
+        if (!mismatchRejected) {
+          throw new Error("browser host did not fail closed on runtime contract mismatch");
+        }
+
+        const host = new BrowserScoreHost(score, {
+          expectedContractVersion: SCORE_RENDERER_CONTRACT_VERSION,
+        });
+
+        const first = await host.renderMusicXml(xml, {
+          autoResize: false,
+          drawTitle: false,
+          drawComposer: false,
+        }, "r8-b1-browser-fixture");
+        if (first.contractVersion !== SCORE_RENDERER_CONTRACT_VERSION) {
+          throw new Error(`unexpected runtime contract ${first.contractVersion}`);
+        }
+        const firstSvg = await host.exportSvg();
+        if (firstSvg.length === 0 || !score.querySelector("svg")) {
+          throw new Error("browser host produced no SVG through the ST adapter boundary");
+        }
+
+        let invalidRejected = false;
+        try {
+          await host.renderMusicXml("");
+        } catch {
+          invalidRejected = true;
+        }
+        if (!invalidRejected) {
+          throw new Error("empty replacement MusicXML was not rejected");
+        }
+        if (score.querySelector("svg")) {
+          throw new Error("stale SVG remained visible after rejected replacement input");
+        }
+
+        const recovered = await host.renderMusicXml(xml, {
+          autoResize: false,
+          drawTitle: false,
+          drawComposer: false,
+        });
+        if (recovered.contractVersion !== SCORE_RENDERER_CONTRACT_VERSION || !score.querySelector("svg")) {
+          throw new Error("browser host failed to recover after fail-closed clearing");
+        }
+
+        status.dataset.contractVersion = recovered.contractVersion;
+        status.dataset.mismatchRejected = "true";
+        status.dataset.staleSvgCleared = "true";
+        status.dataset.renderPass = "true";
+        status.textContent = "R8_B1_PASS";
+      } catch (error) {
+        score.replaceChildren();
+        status.dataset.renderPass = "false";
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "R8_B1_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>
