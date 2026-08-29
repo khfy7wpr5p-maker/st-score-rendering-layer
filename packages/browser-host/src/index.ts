@@ -1,5 +1,6 @@
 import {
   SCORE_RENDERER_CONTRACT_VERSION,
+  type ScoreMeasureRef,
   type ScoreRenderOptions,
   type ScoreRenderResult,
   type ScoreRenderer,
@@ -139,6 +140,21 @@ export class BrowserScoreHost {
       throw new BrowserScoreHostUnavailableError("A score must be rendered before SVG export.");
     }
     return renderer.exportSvg();
+  }
+
+  async moveCursor(target: ScoreMeasureRef): Promise<void> {
+    this.#requireAvailable();
+    if (this.#renderInFlight) {
+      throw new BrowserScoreHostUnavailableError("Measure cursor is unavailable while rendering is in progress.");
+    }
+    const renderer = this.#renderer;
+    if (renderer === undefined) {
+      throw new BrowserScoreHostUnavailableError("A score must be rendered before moving the measure cursor.");
+    }
+    if (!renderer.capabilities.has("cursor")) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide measure cursor capability.");
+    }
+    await renderer.moveCursor(target);
   }
 
   async dispose(): Promise<void> {
