@@ -1,6 +1,8 @@
 import {
   SCORE_RENDERER_CONTRACT_VERSION,
+  type ScoreHighlight,
   type ScoreMeasureRef,
+  type ScoreNoteRef,
   type ScoreRenderOptions,
   type ScoreRenderResult,
   type ScoreRenderer,
@@ -10,6 +12,11 @@ import { validateScoreSource } from "@st/score-renderer-core";
 import { OsmdRenderer } from "@st/score-renderer-osmd";
 
 export type BrowserRendererFactory = (container: HTMLElement) => ScoreRenderer;
+export type BrowserNoteHitPoint = Readonly<{ clientX: number; clientY: number }>;
+
+type BrowserNoteHitTestRenderer = ScoreRenderer & Readonly<{
+  resolveNoteAtClientPoint(point: BrowserNoteHitPoint): ScoreNoteRef | null;
+}>;
 
 export type BrowserScoreHostOptions = Readonly<{
   expectedContractVersion: string;
@@ -36,6 +43,19 @@ export class BrowserScoreHostUnavailableError extends Error {
 }
 
 const DEFAULT_RENDERER_FACTORY: BrowserRendererFactory = (container) => new OsmdRenderer(container);
+
+function hasNoteHitTest(renderer: ScoreRenderer): renderer is BrowserNoteHitTestRenderer {
+  return typeof (renderer as Partial<BrowserNoteHitTestRenderer>).resolveNoteAtClientPoint === "function";
+}
+
+function requireFinitePoint(point: BrowserNoteHitPoint): void {
+  if (point === null || typeof point !== "object" || Array.isArray(point)) {
+    throw new TypeError("Score note hit-test point must be an object.");
+  }
+  if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) {
+    throw new RangeError("Score note hit-test coordinates must be finite numbers.");
+  }
+}
 
 /**
  * Browser-only presentation host for ST score rendering.
@@ -131,30 +151,41 @@ export class BrowserScoreHost {
   }
 
   async exportSvg(): Promise<readonly string[]> {
-    this.#requireAvailable();
-    if (this.#renderInFlight) {
-      throw new BrowserScoreHostUnavailableError("SVG export is unavailable while rendering is in progress.");
-    }
-    const renderer = this.#renderer;
-    if (renderer === undefined) {
-      throw new BrowserScoreHostUnavailableError("A score must be rendered before SVG export.");
-    }
+    const renderer = this.#requireRenderer("SVG export");
     return renderer.exportSvg();
   }
 
   async moveCursor(target: ScoreMeasureRef): Promise<void> {
-    this.#requireAvailable();
-    if (this.#renderInFlight) {
-      throw new BrowserScoreHostUnavailableError("Measure cursor is unavailable while rendering is in progress.");
-    }
-    const renderer = this.#renderer;
-    if (renderer === undefined) {
-      throw new BrowserScoreHostUnavailableError("A score must be rendered before moving the measure cursor.");
-    }
+    const renderer = this.#requireRenderer("Measure cursor");
     if (!renderer.capabilities.has("cursor")) {
       throw new BrowserScoreHostUnavailableError("Selected renderer does not provide measure cursor capability.");
     }
     await renderer.moveCursor(target);
+  }
+
+  hitTestNote(point: BrowserNoteHitPoint): ScoreNoteRef | null {
+    requireFinitePoint(point);
+    const renderer = this.#requireRenderer("Note hit-test");
+    if (!hasNoteHitTest(renderer)) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide note hit-test capability.");
+    }
+    return renderer.resolveNoteAtClientPoint(point);
+  }
+
+  async highlight(highlight: ScoreHighlight): Promise<void> {
+    const renderer = this.#requireRenderer("Note highlight");
+    if (!renderer.capabilities.has("note-highlight")) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide note highlight capability.");
+    }
+    await renderer.highlight(highlight);
+  }
+
+  async clearHighlights(): Promise<void> {
+    const renderer = this.#requireRenderer("Note highlight clearing");
+    if (!renderer.capabilities.has("note-highlight")) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide note highlight capability.");
+    }
+    await renderer.clearHighlights();
   }
 
   async dispose(): Promise<void> {
@@ -167,6 +198,18 @@ export class BrowserScoreHost {
     if (this.#disposed) {
       throw new BrowserScoreHostUnavailableError("BrowserScoreHost has been disposed.");
     }
+  }
+
+  #requireRenderer(operation: string): ScoreRenderer {
+    this.#requireAvailable();
+    if (this.#renderInFlight) {
+      throw new BrowserScoreHostUnavailableError(`${operation} is unavailable while rendering is in progress.`);
+    }
+    const renderer = this.#renderer;
+    if (renderer === undefined) {
+      throw new BrowserScoreHostUnavailableError(`A score must be rendered before ${operation.toLowerCase()}.`);
+    }
+    return renderer;
   }
 
   async #resetCurrentRenderer(): Promise<void> {
