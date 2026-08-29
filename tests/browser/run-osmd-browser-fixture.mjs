@@ -6,6 +6,7 @@ const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const fixtures = [
   "osmd-browser-fixture.html",
   "osmd-interaction-fixture.html",
+  "osmd-note-interaction-fixture.html",
   "osmd-tablature-fixture.html",
   "osmd-accessibility-fixture.html",
   "osmd-browser-host-fixture.html",
