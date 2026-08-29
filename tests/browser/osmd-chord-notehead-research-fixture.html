@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OSMD chord notehead identity research</title>
+</head>
+<body>
+  <div id="score" style="width:720px"></div>
+  <div id="status" data-render-pass="false">CHORD_NOTEHEAD_RESEARCH_PENDING</div>
+  <script src="../../node_modules/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+  <script>
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    <attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+    <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note>
+    <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note>
+    <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note>
+  </measure></part>
+</score-partwise>`;
+
+    (async () => {
+      const status = document.getElementById("status");
+      try {
+        const OSMD = window.opensheetmusicdisplay?.OpenSheetMusicDisplay;
+        if (!OSMD) throw new Error("OSMD browser global unavailable");
+        const osmd = new OSMD("score", { autoResize: false, backend: "svg", drawTitle: false, drawComposer: false });
+        await osmd.load(xml);
+        osmd.render();
+        const instrument = osmd.Sheet.Instruments.find((candidate) => candidate.IdString === "P1");
+        const staffId = instrument.Staves[0].idInMusicSheet;
+        const notes = osmd.graphic.measureList[0][staffId].staffEntries
+          .flatMap((staffEntry) => staffEntry.graphicalVoiceEntries)
+          .flatMap((voiceEntry) => voiceEntry.notes);
+        if (notes.length !== 3) throw new Error(`expected 3 graphical chord notes, got ${notes.length}`);
+        const sharedGroups = notes.map((note) => note.getSVGGElement?.());
+        if (!sharedGroups.every((element) => element && element === sharedGroups[0])) {
+          throw new Error("fixture no longer reproduces shared chord SVG group");
+        }
+        const noteheadArrays = notes.map((note) => note.getNoteheadSVGs?.());
+        const indexes = notes.map((note) => note.vfnoteIndex);
+        if (!indexes.every((value, index) => value === index)) {
+          throw new Error(`unexpected vfnoteIndex sequence ${JSON.stringify(indexes)}`);
+        }
+        if (!noteheadArrays.every((array) => Array.isArray(array) && array.length === 3)) {
+          throw new Error(`unexpected notehead arrays ${noteheadArrays.map((array) => array?.length).join(",")}`);
+        }
+        const exact = notes.map((note, index) => noteheadArrays[index][note.vfnoteIndex]);
+        if (new Set(exact).size !== 3 || exact.some((element) => !element?.classList?.contains("vf-notehead"))) {
+          throw new Error("vfnoteIndex did not select three distinct vf-notehead elements");
+        }
+        for (let index = 0; index < exact.length; index += 1) {
+          const rect = exact[index].getBoundingClientRect();
+          if (!(rect.width > 0 && rect.height > 0)) throw new Error(`notehead ${index} has no client rect`);
+          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          if (!(hit === exact[index] || exact[index].contains(hit))) {
+            throw new Error(`notehead ${index} center does not hit its own SVG subtree`);
+          }
+        }
+        status.dataset.sharedGroup = "true";
+        status.dataset.distinctNoteheads = "true";
+        status.dataset.vfnoteIndex = indexes.join(",");
+        status.dataset.renderPass = "true";
+        status.textContent = "CHORD_NOTEHEAD_RESEARCH_PASS";
+      } catch (error) {
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "CHORD_NOTEHEAD_RESEARCH_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>
