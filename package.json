@@ -9,7 +9,7 @@
     "build": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd packages/adapter-osmd-headless packages/accessibility packages/browser-host",
     "typecheck": "tsc -b packages/contracts packages/renderer-core packages/adapter-osmd packages/adapter-osmd-headless packages/accessibility packages/browser-host --pretty false",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "export:workstation-runtime": "npm run build && node scripts/export-workstation-runtime.mjs",
+    "export:workstation-runtime": "npm run build && node scripts/export-workstation-runtime-with-cursor.mjs",
     "test:browser": "npm run export:workstation-runtime && node tests/browser/run-osmd-browser-fixture.mjs",
     "test:headless": "node tests/headless/run-osmd-headless-gate.mjs",
     "check": "npm run typecheck && npm test"
