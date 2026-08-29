@@ -23,14 +23,14 @@ function createHarness() {
     cursorReset: 0, cursorShow: 0, nextMeasure: 0, updateGraphic: 0,
   };
   const noteElement = createDomElement();
-  const note = { getSVGGElement() { return noteElement; } };
+  const note = {
+    vfnoteIndex: 0,
+    sourceNote: { isRest() { return false; } },
+    getSVGGElement() { return noteElement; },
+    getNoteheadSVGs() { return [noteElement]; },
+  };
   const graphicalMeasure = {
-    staffEntries: [{
-      graphicalVoiceEntries: [{
-        parentVoiceEntry: { ParentVoice: { VoiceId: 1 } },
-        notes: [note],
-      }],
-    }],
+    staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [note] }] }],
   };
   const cursor = {
     iterator: { CurrentMeasureIndex: 0 },
@@ -55,22 +55,18 @@ function createHarness() {
   const styleNodes = [];
   const container = {
     ownerDocument: {
+      defaultView: { Element: Object },
+      elementFromPoint() { return null; },
       createElement() {
         const attrs = new Map();
-        return {
-          textContent: "",
-          setAttribute(name, value) { attrs.set(name, value); },
-          getAttribute(name) { return attrs.get(name) ?? null; },
-        };
+        return { textContent: "", setAttribute(name, value) { attrs.set(name, value); }, getAttribute(name) { return attrs.get(name) ?? null; } };
       },
     },
     querySelector(selector) {
       if (selector === "style[data-st-score-highlight-style]") return styleNodes[0] ?? null;
       return null;
     },
-    querySelectorAll(selector) {
-      return selector === "svg" ? [{ outerHTML: "<svg id=\"a\"></svg>" }] : [];
-    },
+    querySelectorAll(selector) { return selector === "svg" ? [{ outerHTML: "<svg id=\"a\"></svg>" }] : []; },
     prepend(node) { styleNodes.unshift(node); calls.prepended += 1; },
     replaceChildren() { calls.replaced += 1; },
   };
@@ -85,9 +81,7 @@ async function loadAndRender(renderer) {
 
 test("OSMD adapter exposes only capabilities proven through R5", () => {
   const { renderer } = createHarness();
-  for (const capability of ["musicxml-render", "svg-export", "cursor", "note-highlight", "part-visibility", "tablature"]) {
-    assert.equal(renderer.capabilities.has(capability), true);
-  }
+  for (const capability of ["musicxml-render", "svg-export", "cursor", "note-highlight", "part-visibility", "tablature"]) assert.equal(renderer.capabilities.has(capability), true);
   assert.equal(renderer.capabilities.has("headless"), false);
 });
 
@@ -133,14 +127,8 @@ test("R4 highlight adds and clears a safe SVG marker without changing source col
 test("R4 highlight rejects unsafe class names and unresolved notes", async () => {
   const { renderer } = createHarness();
   await loadAndRender(renderer);
-  await assert.rejects(
-    () => renderer.highlight({ target: { partId: "P1", measureIndex: 0, noteIndex: 0 }, className: "bad class" }),
-    /safe CSS class token/,
-  );
-  await assert.rejects(
-    () => renderer.highlight({ target: { partId: "P1", measureIndex: 0, noteIndex: 99 } }),
-    /was not found/,
-  );
+  await assert.rejects(() => renderer.highlight({ target: { partId: "P1", measureIndex: 0, noteIndex: 0 }, className: "bad class" }), /safe CSS class token/);
+  await assert.rejects(() => renderer.highlight({ target: { partId: "P1", measureIndex: 0, noteIndex: 99 } }), /was not found/);
 });
 
 test("R4 part visibility uses stable Instrument.IdString and rebuilds the graphic", async () => {
@@ -155,19 +143,10 @@ test("R4 part visibility uses stable Instrument.IdString and rebuilds the graphi
 
 test("R7 rendered-note resolver exposes only the DOM target after render", async () => {
   const { renderer, noteElement } = createHarness();
-  assert.throws(
-    () => renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 }),
-    /must be rendered/,
-  );
+  assert.throws(() => renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 }), /must be rendered/);
   await loadAndRender(renderer);
-  assert.equal(
-    renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 }),
-    noteElement,
-  );
-  assert.throws(
-    () => renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 99, voice: 1 }),
-    /was not found/,
-  );
+  assert.equal(renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 }), noteElement);
+  assert.throws(() => renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 99, voice: 1 }), /was not found/);
 });
 
 test("OSMD adapter exports SVG and disposes target", async () => {
