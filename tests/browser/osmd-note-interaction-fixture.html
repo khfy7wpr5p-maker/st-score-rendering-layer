@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ST note interaction fixture</title>
+  <style>body{margin:0}#score{width:720px}#status{position:fixed;right:0;bottom:0}</style>
+</head>
+<body>
+  <div id="score"></div>
+  <div id="status" data-render-pass="false">NOTE_INTERACTION_PENDING</div>
+
+  <!-- Renderer-internal fixture plumbing only. Consumer code never imports OSMD. -->
+  <script src="../../node_modules/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "@st/score-renderer-contracts": "../../packages/contracts/dist/index.js",
+      "@st/score-renderer-core": "../../packages/renderer-core/dist/index.js",
+      "@st/score-renderer-osmd": "../../packages/adapter-osmd/dist/index.js",
+      "opensheetmusicdisplay": "./osmd-module-shim.mjs"
+    }
+  }
+  </script>
+  <script type="module">
+    import { SCORE_RENDERER_CONTRACT_VERSION } from "@st/score-renderer-contracts";
+    import { OsmdRenderer } from "@st/score-renderer-osmd";
+    import { BrowserScoreHost } from "../../packages/browser-host/dist/index.js";
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1"><part-name>Keyboard</part-name></score-part>
+    <score-part id="P2"><part-name>Flute</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice><staff>1</staff></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice><staff>1</staff></note>
+      <note><rest/><duration>3</duration><type>half</type><dot/><voice>1</voice><staff>1</staff></note>
+      <backup><duration>4</duration></backup>
+      <note><pitch><step>G</step><octave>3</octave></pitch><duration>4</duration><type>whole</type><voice>2</voice><staff>2</staff></note>
+    </measure>
+  </part>
+  <part id="P2">
+    <measure number="1">
+      <attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <note><pitch><step>A</step><octave>5</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const status = document.getElementById("status");
+    const score = document.getElementById("score");
+    let adapter;
+
+    function sameRef(left, right) {
+      return left?.partId === right.partId && left?.measureIndex === right.measureIndex &&
+        left?.noteIndex === right.noteIndex && left?.voice === right.voice;
+    }
+
+    async function pointForExactTarget(host, element, expected) {
+      element.scrollIntoView({ block: "center", inline: "center" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const rect = element.getBoundingClientRect();
+      if (!(rect.width > 0 && rect.height > 0)) throw new Error("rendered note has no client rect");
+      const fractions = [0.25, 0.5, 0.75];
+      for (const fx of fractions) {
+        for (const fy of fractions) {
+          const point = { clientX: rect.left + rect.width * fx, clientY: rect.top + rect.height * fy };
+          const resolved = host.hitTestNote(point);
+          if (sameRef(resolved, expected)) return point;
+        }
+      }
+      throw new Error(`no exact hit-test point found for ${JSON.stringify(expected)}`);
+    }
+
+    async function proveAtWidth(width) {
+      score.style.width = `${width}px`;
+      let activeAdapter;
+      const host = new BrowserScoreHost(score, {
+        expectedContractVersion: SCORE_RENDERER_CONTRACT_VERSION,
+        rendererFactory(container) {
+          activeAdapter = new OsmdRenderer(container);
+          adapter = activeAdapter;
+          return activeAdapter;
+        },
+      });
+      await host.renderMusicXml(xml, {
+        autoResize: false,
+        drawTitle: false,
+        drawComposer: false,
+      }, `note-interaction-${width}`);
+
+      const chord0 = { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 };
+      const chord1 = { partId: "P1", measureIndex: 0, noteIndex: 1, voice: 1 };
+      const staff2 = { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 2 };
+      const part2 = { partId: "P2", measureIndex: 0, noteIndex: 0, voice: 1 };
+      const targets = [chord0, chord1, staff2, part2];
+      const elements = targets.map((target) => activeAdapter.resolveRenderedNoteElement(target));
+
+      if (elements[0] === elements[1]) {
+        throw new Error("OSMD chord notes share one graphical SVG element; exact chord hit-test is unavailable");
+      }
+
+      for (let index = 0; index < targets.length; index += 1) {
+        await pointForExactTarget(host, elements[index], targets[index]);
+      }
+
+      const chordPoint = await pointForExactTarget(host, elements[1], chord1);
+      const resolvedAgain = host.hitTestNote(chordPoint);
+      if (!sameRef(resolvedAgain, chord1)) throw new Error("repeated chord hit-test was not deterministic");
+
+      await host.highlight({ target: chord1, className: "teacher-focus" });
+      if (elements[1].getAttribute("data-st-score-highlight") !== "true" ||
+          !elements[1].classList.contains("teacher-focus")) {
+        throw new Error("highlight did not target the exact chord note");
+      }
+      if (elements[0].getAttribute("data-st-score-highlight") === "true") {
+        throw new Error("highlight leaked to the other chord note");
+      }
+      await host.clearHighlights();
+      if (elements[1].getAttribute("data-st-score-highlight") !== null ||
+          elements[1].classList.contains("teacher-focus")) {
+        throw new Error("clearHighlights left renderer-owned highlight state");
+      }
+
+      window.scrollTo(0, 0);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const scoreRect = score.getBoundingClientRect();
+      const whitespace = host.hitTestNote({ clientX: scoreRect.left + 2, clientY: scoreRect.top + 2 });
+      if (whitespace !== null) throw new Error("score whitespace produced a note hit");
+      const outside = host.hitTestNote({ clientX: Math.max(0, scoreRect.right + 20), clientY: 5 });
+      if (outside !== null) throw new Error("outside-renderer coordinates produced a note hit");
+
+      const oldChordElement = elements[1];
+      await host.renderMusicXml(xml, {
+        autoResize: false,
+        drawTitle: false,
+        drawComposer: false,
+      }, `note-interaction-rerender-${width}`);
+      const newChordElement = adapter.resolveRenderedNoteElement(chord1);
+      if (newChordElement === oldChordElement || oldChordElement.isConnected) {
+        throw new Error("rerender retained stale graphical-note DOM identity");
+      }
+      await pointForExactTarget(host, newChordElement, chord1);
+      await host.dispose();
+    }
+
+    (async () => {
+      try {
+        await proveAtWidth(720);
+        await proveAtWidth(320);
+        status.dataset.contractVersion = SCORE_RENDERER_CONTRACT_VERSION;
+        status.dataset.chordExact = "true";
+        status.dataset.multiVoice = "true";
+        status.dataset.multiStaff = "true";
+        status.dataset.multiPart = "true";
+        status.dataset.renderPass = "true";
+        status.textContent = "NOTE_INTERACTION_PASS";
+      } catch (error) {
+        score.replaceChildren();
+        status.dataset.renderPass = "false";
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "NOTE_INTERACTION_FAIL";
+      }
+    })();
+  </script>
+</body>
+</html>
