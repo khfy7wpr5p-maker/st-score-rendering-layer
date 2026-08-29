@@ -71,6 +71,7 @@ export interface OsmdEngine {
 }
 
 export type OsmdFactory = (container: HTMLElement) => OsmdEngine;
+export type OsmdClientPoint = Readonly<{ clientX: number; clientY: number }>;
 
 const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
   "musicxml-render",
@@ -82,10 +83,18 @@ const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
 ]);
 const DEFAULT_HIGHLIGHT_CLASS = "st-score-highlight";
 const HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const MAX_HIT_TEST_NOTE_ELEMENTS = 200_000;
 
 type OsmdModuleShape = Partial<typeof OsmdModule> & {
   default?: Partial<typeof OsmdModule>;
 };
+
+type IndexedGraphicalNote = Readonly<{
+  note: OsmdGraphicalNote;
+  globalIndex: number;
+  voice?: number;
+  voiceIndex?: number;
+}>;
 
 function resolveOpenSheetMusicDisplay(): typeof OsmdModule.OpenSheetMusicDisplay {
   const moduleShape = OsmdModule as OsmdModuleShape;
@@ -109,8 +118,24 @@ function requireNonNegativeInteger(value: number, label: string): void {
   }
 }
 
+function requireFiniteCoordinate(value: number, label: string): void {
+  if (!Number.isFinite(value)) throw new RangeError(`${label} must be a finite number.`);
+}
+
 function voiceId(entry: OsmdGraphicalVoiceEntry): number | undefined {
   return entry.parentVoiceEntry?.ParentVoice?.VoiceId ?? entry.parentVoiceEntry?.parentVoice?.VoiceId;
+}
+
+function normalizedVoiceId(entry: OsmdGraphicalVoiceEntry): number | undefined {
+  const value = voiceId(entry);
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function sameScoreNoteRef(left: ScoreNoteRef, right: ScoreNoteRef): boolean {
+  return left.partId === right.partId &&
+    left.measureIndex === right.measureIndex &&
+    left.noteIndex === right.noteIndex &&
+    left.voice === right.voice;
 }
 
 export class OsmdRenderer implements ScoreRenderer {
@@ -119,6 +144,7 @@ export class OsmdRenderer implements ScoreRenderer {
   readonly #container: HTMLElement;
   readonly #factory: OsmdFactory;
   readonly #highlighted = new Map<Element, string>();
+  #noteRefByElement: WeakMap<Element, ScoreNoteRef | null> = new WeakMap();
   #osmd: OsmdEngine | undefined;
   #loaded = false;
   #rendered = false;
@@ -131,6 +157,7 @@ export class OsmdRenderer implements ScoreRenderer {
   async load(source: ScoreSource): Promise<void> {
     validateScoreSource(source);
     await this.clearHighlights();
+    this.#resetHitTestIndex();
     const osmd = this.#ensureOsmd();
     await osmd.load(source.content);
     this.#loaded = true;
@@ -140,6 +167,7 @@ export class OsmdRenderer implements ScoreRenderer {
   async render(options: ScoreRenderOptions = {}): Promise<ScoreRenderResult> {
     if (!this.#loaded) throw new Error("A MusicXML score must be loaded before render().");
     await this.clearHighlights();
+    this.#resetHitTestIndex();
     const osmd = this.#ensureOsmd();
     osmd.setOptions({
       autoResize: options.autoResize ?? true,
@@ -149,6 +177,13 @@ export class OsmdRenderer implements ScoreRenderer {
     });
     osmd.render();
     this.#rendered = true;
+    try {
+      this.#rebuildHitTestIndex();
+    } catch (error) {
+      this.#rendered = false;
+      this.#resetHitTestIndex();
+      throw error;
+    }
     return { rendererId: this.id, contractVersion: SCORE_RENDERER_CONTRACT_VERSION };
   }
 
@@ -166,6 +201,41 @@ export class OsmdRenderer implements ScoreRenderer {
     const element = graphicalNote.getSVGGElement?.();
     if (!element) throw new Error("The selected note has no SVG element in the rendered score.");
     return element;
+  }
+
+  /**
+   * Resolve only an exact rendered graphical-note DOM ancestry hit. This method never
+   * searches for the nearest note and returns null for whitespace or unmapped glyphs.
+   * Duplicate DOM ownership is marked ambiguous and also returns null.
+   */
+  resolveNoteAtClientPoint(point: OsmdClientPoint): ScoreNoteRef | null {
+    this.#requireRendered("resolveNoteAtClientPoint()");
+    requireFiniteCoordinate(point.clientX, "clientX");
+    requireFiniteCoordinate(point.clientY, "clientY");
+
+    const hit = this.#container.ownerDocument.elementFromPoint(point.clientX, point.clientY);
+    if (hit === null) return null;
+
+    let current: Element | null = hit;
+    let resolved: ScoreNoteRef | undefined;
+    let insideContainer = false;
+    while (current !== null) {
+      if (current === this.#container) {
+        insideContainer = true;
+        break;
+      }
+      if (this.#noteRefByElement.has(current)) {
+        const candidate = this.#noteRefByElement.get(current);
+        if (candidate === null) return null;
+        if (candidate !== undefined) {
+          if (resolved !== undefined && !sameScoreNoteRef(resolved, candidate)) return null;
+          resolved = candidate;
+        }
+      }
+      current = current.parentElement;
+    }
+
+    return insideContainer ? resolved ?? null : null;
   }
 
   async highlight(highlight: ScoreHighlight): Promise<void> {
@@ -223,15 +293,24 @@ export class OsmdRenderer implements ScoreRenderer {
     const osmd = this.#ensureOsmd();
     const instrument = this.#findInstrument(part.partId);
     await this.clearHighlights();
+    this.#resetHitTestIndex();
     instrument.Visible = visible;
     if (!osmd.updateGraphic) throw new Error("OSMD updateGraphic() is unavailable for part visibility changes.");
     osmd.updateGraphic();
     osmd.render();
     this.#rendered = true;
+    try {
+      this.#rebuildHitTestIndex();
+    } catch (error) {
+      this.#rendered = false;
+      this.#resetHitTestIndex();
+      throw error;
+    }
   }
 
   async dispose(): Promise<void> {
     await this.clearHighlights();
+    this.#resetHitTestIndex();
     this.#container.replaceChildren();
     this.#osmd = undefined;
     this.#loaded = false;
@@ -254,34 +333,100 @@ export class OsmdRenderer implements ScoreRenderer {
     return instrument;
   }
 
-  #resolveGraphicalNote(target: ScoreNoteRef): OsmdGraphicalNote {
-    requireNonNegativeInteger(target.measureIndex, "measureIndex");
-    requireNonNegativeInteger(target.noteIndex, "noteIndex");
-    if (target.voice !== undefined) requireNonNegativeInteger(target.voice, "voice");
-
+  #listGraphicalNotes(partId: string, measureIndex: number): readonly IndexedGraphicalNote[] {
     const osmd = this.#ensureOsmd();
-    const instrument = this.#findInstrument(target.partId);
-    const measure = osmd.graphic?.measureList?.[target.measureIndex];
-    if (!measure) throw new Error(`Rendered measure ${target.measureIndex} is unavailable.`);
+    const instrument = this.#findInstrument(partId);
+    const measure = osmd.graphic?.measureList?.[measureIndex];
+    if (!measure) throw new Error(`Rendered measure ${measureIndex} is unavailable.`);
 
-    const notes: OsmdGraphicalNote[] = [];
+    const indexedNotes: IndexedGraphicalNote[] = [];
+    const voiceIndexes = new Map<number, number>();
+    let globalIndex = 0;
     const staffIds = instrument.Staves.map((staff) => staff.idInMusicSheet).sort((a, b) => a - b);
     for (const staffId of staffIds) {
       const graphicalMeasure = measure[staffId];
       for (const staffEntry of graphicalMeasure?.staffEntries ?? []) {
         for (const graphicalVoiceEntry of staffEntry.graphicalVoiceEntries ?? []) {
-          if (target.voice !== undefined && voiceId(graphicalVoiceEntry) !== target.voice) continue;
-          notes.push(...(graphicalVoiceEntry.notes ?? []));
+          const voice = normalizedVoiceId(graphicalVoiceEntry);
+          for (const note of graphicalVoiceEntry.notes ?? []) {
+            if (voice === undefined) {
+              indexedNotes.push(Object.freeze({ note, globalIndex }));
+            } else {
+              const voiceIndex = voiceIndexes.get(voice) ?? 0;
+              indexedNotes.push(Object.freeze({ note, globalIndex, voice, voiceIndex }));
+              voiceIndexes.set(voice, voiceIndex + 1);
+            }
+            globalIndex += 1;
+          }
         }
       }
     }
+    return indexedNotes;
+  }
 
-    const note = notes[target.noteIndex];
-    if (!note) {
+  #resolveGraphicalNote(target: ScoreNoteRef): OsmdGraphicalNote {
+    requireNonNegativeInteger(target.measureIndex, "measureIndex");
+    requireNonNegativeInteger(target.noteIndex, "noteIndex");
+    if (target.voice !== undefined) requireNonNegativeInteger(target.voice, "voice");
+
+    const notes = this.#listGraphicalNotes(target.partId, target.measureIndex);
+    const selected = target.voice === undefined
+      ? notes.find((entry) => entry.globalIndex === target.noteIndex)
+      : notes.find((entry) => entry.voice === target.voice && entry.voiceIndex === target.noteIndex);
+    if (selected === undefined) {
       const voiceSuffix = target.voice === undefined ? "" : ` for voice ${target.voice}`;
       throw new Error(`Rendered note ${target.noteIndex}${voiceSuffix} was not found in part '${target.partId}', measure ${target.measureIndex}.`);
     }
-    return note;
+    return selected.note;
+  }
+
+  #rebuildHitTestIndex(): void {
+    this.#resetHitTestIndex();
+    const osmd = this.#ensureOsmd();
+    const instruments = osmd.Sheet?.Instruments ?? [];
+    const measureCount = osmd.graphic?.measureList?.length ?? 0;
+    let indexedElementCount = 0;
+
+    for (const instrument of instruments) {
+      for (let measureIndex = 0; measureIndex < measureCount; measureIndex += 1) {
+        const entries = this.#listGraphicalNotes(instrument.IdString, measureIndex);
+        for (const entry of entries) {
+          const element = entry.note.getSVGGElement?.();
+          if (!element) continue;
+          indexedElementCount += 1;
+          if (indexedElementCount > MAX_HIT_TEST_NOTE_ELEMENTS) {
+            throw new RangeError(`Rendered note hit-test index exceeds ${MAX_HIT_TEST_NOTE_ELEMENTS} elements.`);
+          }
+          const target: ScoreNoteRef = entry.voice === undefined
+            ? Object.freeze({
+                partId: instrument.IdString,
+                measureIndex,
+                noteIndex: entry.globalIndex,
+              })
+            : Object.freeze({
+                partId: instrument.IdString,
+                measureIndex,
+                noteIndex: entry.voiceIndex as number,
+                voice: entry.voice,
+              });
+          this.#registerHitTestElement(element, target);
+        }
+      }
+    }
+  }
+
+  #registerHitTestElement(element: Element, target: ScoreNoteRef): void {
+    if (!this.#noteRefByElement.has(element)) {
+      this.#noteRefByElement.set(element, target);
+      return;
+    }
+    const previous = this.#noteRefByElement.get(element);
+    if (previous === null || previous === undefined) return;
+    if (!sameScoreNoteRef(previous, target)) this.#noteRefByElement.set(element, null);
+  }
+
+  #resetHitTestIndex(): void {
+    this.#noteRefByElement = new WeakMap();
   }
 
   #ensureHighlightStyle(): void {
