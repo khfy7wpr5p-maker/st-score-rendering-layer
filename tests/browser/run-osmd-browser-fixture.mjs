@@ -70,7 +70,17 @@ for (const fixture of fixtures) {
   const dom = result.stdout ?? "";
   if (!dom.includes('data-render-pass="true"') || !dom.includes("<svg")) {
     console.error(`${fixture} failed: browser capability evidence was not produced.`);
-    console.error(dom.slice(-6000));
+    const errorIndex = dom.indexOf("data-render-error=");
+    if (errorIndex >= 0) {
+      console.error(dom.slice(Math.max(0, errorIndex - 500), Math.min(dom.length, errorIndex + 2500)));
+    } else {
+      const failIndex = dom.indexOf("NOTE_INTERACTION_FAIL");
+      if (failIndex >= 0) {
+        console.error(dom.slice(Math.max(0, failIndex - 1000), Math.min(dom.length, failIndex + 1000)));
+      } else {
+        console.error(dom.slice(-6000));
+      }
+    }
     process.exit(1);
   }
   console.log(`Browser fixture PASS: ${fixture}`);
