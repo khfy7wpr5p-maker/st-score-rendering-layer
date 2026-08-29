@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,7 +46,7 @@ export async function exportBrowserRuntime({
   const browserBootstrapPath = path.join(result.destinationRoot, "browser-bootstrap.mjs");
   const bootstrap = await readFile(workstationBootstrapPath, "utf8");
   await writeFile(browserBootstrapPath, browserBootstrapSource(bootstrap), "utf8");
-  await rename(workstationBootstrapPath, `${workstationBootstrapPath}.removed`);
+  await rm(workstationBootstrapPath);
 
   const indexPath = path.join(result.destinationRoot, "index.html");
   const indexHtml = await readFile(indexPath, "utf8");
