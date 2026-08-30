@@ -57,15 +57,19 @@ If two different `ScoreNoteRef` values claim the same graphical DOM element, tha
 
 ### Glyph policy
 
+The pinned OSMD `2.1.2` adapter uses the public graphical-note primitives `getNoteheadSVGs()` and `vfnoteIndex` to map a pitched `GraphicalNote` to its exact rendered notehead. Real-browser research on the pinned version proved that chord members may share `getSVGGElement()` while `getNoteheadSVGs()[vfnoteIndex]` resolves distinct notehead elements. Therefore shared StaveNote SVG groups are not used as exact note identity.
+
+For a single pitched graphical note, if `vfnoteIndex` is unavailable but `getNoteheadSVGs()` exposes exactly one element, index `0` is accepted as an unambiguous exact-notehead fallback. For multi-note/chord cases a valid `vfnoteIndex` is required; otherwise interaction fails closed. Graphical rests are excluded using the public source-note `isRest()` signal and are never added to the note interaction index.
+
 Hit-test walks only the actual `document.elementFromPoint()` DOM ancestry until the renderer container.
 
-- an exact mapped graphical-note element or its descendant may resolve to that note;
-- this naturally permits a stem or accidental only when OSMD places that glyph inside the exact graphical-note DOM group;
-- rests, beams, staff lines, slurs, text, measure whitespace and other unmapped SVG/HTML nodes return `null`;
+- an exact mapped notehead element or its descendant may resolve to that note;
+- rests, shared StaveNote groups, beams, staff lines, slurs, text, measure whitespace and other unmapped SVG/HTML nodes return `null`;
 - elements outside the renderer container return `null`;
-- no nearest-note fallback exists.
+- no nearest-note fallback exists;
+- no pitch matching exists.
 
-Chord noteheads are accepted only when real-browser evidence proves OSMD exposes distinct graphical-note DOM identity. Shared DOM ownership is treated as ambiguous and fails closed.
+Duplicate exact-notehead ownership remains ambiguous and returns `null` rather than selecting an arbitrary note.
 
 ## BrowserScoreHost API
 
