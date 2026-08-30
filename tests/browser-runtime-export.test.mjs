@@ -15,7 +15,7 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
-test("browser runtime is consumer-neutral and keeps the bounded renderer host", async () => {
+test("browser runtime is consumer-neutral and exposes bounded presentation interactions", async () => {
   await rm(outputRoot, { recursive: true, force: true });
   try {
     const result = await exportBrowserRuntime({
@@ -28,8 +28,17 @@ test("browser runtime is consumer-neutral and keeps the bounded renderer host", 
     assert.match(bootstrap, /globalThis\.__ST_SCORE_RENDER_HOST__ = runtimeHost/);
     assert.match(bootstrap, /async moveCursor\(payload\)/);
     assert.match(bootstrap, /activeHost\.moveCursor\(\{ partId, measureIndex \}\)/);
+    assert.match(bootstrap, /hitTestNote\(payload\)/);
+    assert.match(bootstrap, /activeHost\.hitTestNote/);
+    assert.match(bootstrap, /async highlight\(payload\)/);
+    assert.match(bootstrap, /activeHost\.highlight/);
+    assert.match(bootstrap, /async clearHighlights\(\)/);
+    assert.match(bootstrap, /activeHost\.clearHighlights\(\)/);
+    assert.match(bootstrap, /Object\.getPrototypeOf\(payload\)/);
+    assert.match(bootstrap, /contains unsupported field/);
     assert.match(bootstrap, /st-score-render-host-ready/);
     assert.doesNotMatch(bootstrap, /__JUCE__|__ST_WORKSTATION_SCORE_SHELL__|emitNative/);
+    assert.doesNotMatch(bootstrap, /graphic\.measureList|opensheetmusicdisplay/i);
 
     const indexHtml = await readFile(path.join(outputRoot, "index.html"), "utf8");
     assert.match(indexHtml, /\.\/browser-bootstrap\.mjs/);
