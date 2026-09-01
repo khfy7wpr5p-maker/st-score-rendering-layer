@@ -20,11 +20,11 @@ function createElement(name, parentElement = null) {
   };
 }
 
-function graphicalNote(element, { rest = false } = {}) {
+function graphicalNote(element, { rest = false, group = element } = {}) {
   return {
     vfnoteIndex: 0,
     sourceNote: { isRest() { return rest; } },
-    getSVGGElement() { return element; },
+    getSVGGElement() { return group; },
     getNoteheadSVGs() { return [element]; },
   };
 }
@@ -51,26 +51,31 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false 
   container.prepend = (node) => styleNodes.unshift(node);
   container.replaceChildren = () => {};
 
-  const p1v1n0 = createElement("p1-v1-n0", container);
-  const p1v1n1 = ambiguousChord ? p1v1n0 : createElement("p1-v1-n1", container);
-  const p1v2n0 = createElement("p1-v2-n0", container);
-  const p1staff2v1n2 = createElement("p1-staff2-v1-n2", container);
-  const p2v1n0 = createElement("p2-v1-n0", container);
+  const chordGroup = createElement("p1-v1-chord-group", container);
+  const p1v1n0 = createElement("p1-v1-n0", chordGroup);
+  const p1v1n1 = ambiguousChord ? p1v1n0 : createElement("p1-v1-n1", chordGroup);
+  const voice2Group = createElement("p1-v2-group", container);
+  const p1v2n0 = createElement("p1-v2-n0", voice2Group);
+  const p1v2Stem = createElement("p1-v2-stem", voice2Group);
+  const staff2Group = createElement("p1-staff2-v1-group", container);
+  const p1staff2v1n2 = createElement("p1-staff2-v1-n2", staff2Group);
+  const p2Group = createElement("p2-v1-group", container);
+  const p2v1n0 = createElement("p2-v1-n0", p2Group);
   const restElement = createElement("rest", container);
   const whitespace = createElement("whitespace", container);
   const outside = createElement("outside", null);
 
-  const voice1Notes = [graphicalNote(p1v1n0), graphicalNote(p1v1n1)];
+  const voice1Notes = [graphicalNote(p1v1n0, { group: chordGroup }), graphicalNote(p1v1n1, { group: chordGroup })];
   if (includeRest) voice1Notes.push(graphicalNote(restElement, { rest: true }));
   const staff0 = {
     staffEntries: [
       { graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: voice1Notes }] },
-      { graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 2 } }, notes: [graphicalNote(p1v2n0)] }] },
+      { graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 2 } }, notes: [graphicalNote(p1v2n0, { group: voice2Group })] }] },
       { graphicalVoiceEntries: [] },
     ],
   };
-  const staff1 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p1staff2v1n2)] }] }] };
-  const staff2 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p2v1n0)] }] }] };
+  const staff1 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p1staff2v1n2, { group: staff2Group })] }] }] };
+  const staff2 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p2v1n0, { group: p2Group })] }] }] };
 
   const engine = {
     Sheet: {
@@ -86,7 +91,7 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false 
   const renderer = new OsmdRenderer(container, () => engine);
   return {
     renderer, engine,
-    elements: { p1v1n0, p1v1n1, p1v2n0, p1staff2v1n2, p2v1n0, restElement, whitespace, outside },
+    elements: { chordGroup, p1v1n0, p1v1n1, voice2Group, p1v2n0, p1v2Stem, p1staff2v1n2, p2v1n0, restElement, whitespace, outside },
     hit(element) { hitElement = element; },
   };
 }
@@ -116,6 +121,30 @@ test("note hit-test follows deterministic part/staff/voice/chord traversal", asy
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), null);
   harness.hit(null);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), null);
+});
+
+test("unique graphical note groups widen exact touch ownership while shared chord groups abstain", async () => {
+  const harness = createInteractionHarness();
+  await renderHarness(harness);
+
+  harness.hit(harness.elements.p1v2Stem);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 12, clientY: 22 }), {
+    partId: "P1",
+    measureIndex: 0,
+    noteIndex: 0,
+    voice: 2,
+  });
+
+  harness.hit(harness.elements.chordGroup);
+  assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 12, clientY: 22 }), null);
+
+  harness.hit(harness.elements.p1v1n0);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 12, clientY: 22 }), {
+    partId: "P1",
+    measureIndex: 0,
+    noteIndex: 0,
+    voice: 1,
+  });
 });
 
 test("same render and repeated render preserve the same ScoreNoteRef", async () => {
@@ -174,8 +203,9 @@ test("rerender drops stale DOM hit-test ownership", async () => {
   const harness = createInteractionHarness();
   await renderHarness(harness);
   const oldElement = harness.elements.p1v1n0;
-  const freshElement = createElement("fresh-note", oldElement.parentElement);
-  harness.engine.graphic.measureList[0][0].staffEntries[0].graphicalVoiceEntries[0].notes = [graphicalNote(freshElement)];
+  const freshGroup = createElement("fresh-group", oldElement.parentElement?.parentElement ?? null);
+  const freshElement = createElement("fresh-note", freshGroup);
+  harness.engine.graphic.measureList[0][0].staffEntries[0].graphicalVoiceEntries[0].notes = [graphicalNote(freshElement, { group: freshGroup })];
   await harness.renderer.render({ autoResize: false });
   harness.hit(oldElement);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), null);
