@@ -18,12 +18,17 @@ export interface OsmdEngine {
 }
 export type OsmdFactory = (container: HTMLElement) => OsmdEngine;
 export type OsmdClientPoint = Readonly<{ clientX: number; clientY: number }>;
+export type OsmdNoteHitMissReason = "NO_ELEMENT_AT_POINT" | "OUTSIDE_RENDER_CONTAINER" | "UNMAPPED_ELEMENT" | "AMBIGUOUS_OWNERSHIP" | "NO_NOTE_OWNER";
+export type OsmdNoteHitDetailedResult = Readonly<{ kind: "HIT"; target: ScoreNoteRef }> | Readonly<{ kind: "MISS"; reason: OsmdNoteHitMissReason }>;
 const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set(["musicxml-render", "svg-export", "cursor", "note-highlight", "part-visibility", "tablature"]);
 const DEFAULT_HIGHLIGHT_CLASS = "st-score-highlight";
 const HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_HIT_TEST_NOTE_ELEMENTS = 200_000;
+const AMBIGUOUS_HIT_OWNER = "AMBIGUOUS" as const;
+const NO_NOTE_HIT_OWNER = "NO_NOTE_OWNER" as const;
 type OsmdModuleShape = Partial<typeof OsmdModule> & { default?: Partial<typeof OsmdModule>; };
 type IndexedGraphicalNote = Readonly<{ note: OsmdGraphicalNote; globalIndex: number; voice?: number; voiceIndex?: number; }>;
+type HitTestOwner = ScoreNoteRef | typeof AMBIGUOUS_HIT_OWNER | typeof NO_NOTE_HIT_OWNER;
 
 function resolveOpenSheetMusicDisplay(): typeof OsmdModule.OpenSheetMusicDisplay {
   const moduleShape = OsmdModule as OsmdModuleShape;
@@ -37,10 +42,13 @@ function requireFiniteCoordinate(value: number, label: string): void { if (!Numb
 function voiceId(entry: OsmdGraphicalVoiceEntry): number | undefined { return entry.parentVoiceEntry?.ParentVoice?.VoiceId ?? entry.parentVoiceEntry?.parentVoice?.VoiceId; }
 function normalizedVoiceId(entry: OsmdGraphicalVoiceEntry): number | undefined { const value = voiceId(entry); return value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : undefined; }
 function sameScoreNoteRef(left: ScoreNoteRef, right: ScoreNoteRef): boolean { return left.partId === right.partId && left.measureIndex === right.measureIndex && left.noteIndex === right.noteIndex && left.voice === right.voice; }
+function miss(reason: OsmdNoteHitMissReason): OsmdNoteHitDetailedResult { return Object.freeze({ kind: "MISS", reason }); }
+function hit(target: ScoreNoteRef): OsmdNoteHitDetailedResult { return Object.freeze({ kind: "HIT", target }); }
+function isScoreNoteRefOwner(owner: HitTestOwner): owner is ScoreNoteRef { return owner !== AMBIGUOUS_HIT_OWNER && owner !== NO_NOTE_HIT_OWNER; }
 
 export class OsmdRenderer implements ScoreRenderer {
   readonly id = "osmd"; readonly capabilities = CAPABILITIES; readonly #container: HTMLElement; readonly #factory: OsmdFactory; readonly #highlighted = new Map<Element, string>();
-  #noteRefByElement: WeakMap<Element, ScoreNoteRef | null> = new WeakMap(); #osmd: OsmdEngine | undefined; #loaded = false; #rendered = false;
+  #noteRefByElement: WeakMap<Element, HitTestOwner> = new WeakMap(); #osmd: OsmdEngine | undefined; #loaded = false; #rendered = false;
   constructor(container: HTMLElement, factory: OsmdFactory = createDefaultOsmd) { this.#container = container; this.#factory = factory; }
   async load(source: ScoreSource): Promise<void> { validateScoreSource(source); await this.clearHighlights(); this.#resetHitTestIndex(); const osmd = this.#ensureOsmd(); await osmd.load(source.content); this.#loaded = true; this.#rendered = false; }
   async render(options: ScoreRenderOptions = {}): Promise<ScoreRenderResult> {
@@ -54,23 +62,23 @@ export class OsmdRenderer implements ScoreRenderer {
   async exportSvg(): Promise<readonly string[]> { return [...this.#container.querySelectorAll("svg")].map((node) => node.outerHTML); }
   resolveRenderedNoteElement(target: ScoreNoteRef): Element { this.#requireRendered("resolveRenderedNoteElement()"); return this.#resolveExactNoteheadElement(this.#resolveGraphicalNote(target)); }
   resolveNoteAtClientPoint(point: OsmdClientPoint): ScoreNoteRef | null {
-    this.#requireRendered("resolveNoteAtClientPoint()"); requireFiniteCoordinate(point.clientX, "clientX"); requireFiniteCoordinate(point.clientY, "clientY");
-    const hit = this.#container.ownerDocument.elementFromPoint(point.clientX, point.clientY); if (hit === null) return null;
-    let current: Element | null = hit; let resolved: ScoreNoteRef | undefined; let insideContainer = false;
+    const result = this.resolveNoteAtClientPointDetailed(point);
+    return result.kind === "HIT" ? result.target : null;
+  }
+  resolveNoteAtClientPointDetailed(point: OsmdClientPoint): OsmdNoteHitDetailedResult {
+    this.#requireRendered("resolveNoteAtClientPointDetailed()"); requireFiniteCoordinate(point.clientX, "clientX"); requireFiniteCoordinate(point.clientY, "clientY");
+    const initial = this.#container.ownerDocument.elementFromPoint(point.clientX, point.clientY); if (initial === null) return miss("NO_ELEMENT_AT_POINT");
+    let current: Element | null = initial; let resolved: ScoreNoteRef | undefined; let insideContainer = false;
     while (current !== null) {
       if (current === this.#container) { insideContainer = true; break; }
-      if (this.#noteRefByElement.has(current)) {
-        const candidate = this.#noteRefByElement.get(current);
-        // An ambiguous broader graphical group must not erase a more-specific
-        // exact notehead descendant that already proved identity. But when the
-        // tap reaches only the ambiguous group (for example a shared chord
-        // StaveNote group), interaction still fails closed.
-        if (candidate === null) { if (resolved === undefined) return null; }
-        else if (candidate !== undefined) { if (resolved !== undefined && !sameScoreNoteRef(resolved, candidate)) return null; resolved = candidate; }
-      }
+      const owner = this.#noteRefByElement.get(current);
+      if (owner === AMBIGUOUS_HIT_OWNER) { if (resolved === undefined) return miss("AMBIGUOUS_OWNERSHIP"); }
+      else if (owner === NO_NOTE_HIT_OWNER) { if (resolved === undefined) return miss("NO_NOTE_OWNER"); }
+      else if (owner !== undefined) { if (resolved !== undefined && !sameScoreNoteRef(resolved, owner)) return miss("AMBIGUOUS_OWNERSHIP"); resolved = owner; }
       current = current.parentElement;
     }
-    return insideContainer ? resolved ?? null : null;
+    if (!insideContainer) return miss("OUTSIDE_RENDER_CONTAINER");
+    return resolved === undefined ? miss("UNMAPPED_ELEMENT") : hit(resolved);
   }
   async highlight(highlight: ScoreHighlight): Promise<void> {
     this.#requireRendered("highlight()"); const className = highlight.className ?? DEFAULT_HIGHLIGHT_CLASS;
@@ -123,10 +131,17 @@ export class OsmdRenderer implements ScoreRenderer {
     return ElementConstructor !== undefined && group instanceof ElementConstructor ? group : null;
   }
   #rebuildHitTestIndex(): void {
-    this.#resetHitTestIndex(); const osmd = this.#ensureOsmd(); const instruments = osmd.Sheet?.Instruments ?? []; const measureCount = osmd.graphic?.measureList?.length ?? 0; let indexedElementCount = 0;
-    for (const instrument of instruments) { for (let measureIndex = 0; measureIndex < measureCount; measureIndex += 1) { const entries = this.#listGraphicalNotes(instrument.IdString, measureIndex); for (const entry of entries) { if (this.#isRest(entry.note)) continue; const element = this.#resolveExactNoteheadElement(entry.note); indexedElementCount += 1; if (indexedElementCount > MAX_HIT_TEST_NOTE_ELEMENTS) throw new RangeError(`Rendered note hit-test index exceeds ${MAX_HIT_TEST_NOTE_ELEMENTS} elements.`); const target: ScoreNoteRef = entry.voice === undefined ? Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.globalIndex }) : Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.voiceIndex as number, voice: entry.voice }); this.#registerHitTestElement(element, target); const group = this.#resolveOwnedGraphicalGroup(entry.note); if (group !== null && group !== element) this.#registerHitTestElement(group, target); } } }
+    this.#resetHitTestIndex(); const osmd = this.#ensureOsmd(); const instruments = osmd.Sheet?.Instruments ?? []; const measureCount = osmd.graphic?.measureList?.length ?? 0; let indexedGraphicalNoteCount = 0;
+    for (const instrument of instruments) { for (let measureIndex = 0; measureIndex < measureCount; measureIndex += 1) { const entries = this.#listGraphicalNotes(instrument.IdString, measureIndex); for (const entry of entries) { indexedGraphicalNoteCount += 1; if (indexedGraphicalNoteCount > MAX_HIT_TEST_NOTE_ELEMENTS) throw new RangeError(`Rendered note hit-test index exceeds ${MAX_HIT_TEST_NOTE_ELEMENTS} graphical notes.`); if (this.#isRest(entry.note)) { const restGroup = this.#resolveOwnedGraphicalGroup(entry.note); if (restGroup !== null) this.#registerHitTestElement(restGroup, NO_NOTE_HIT_OWNER); continue; } const element = this.#resolveExactNoteheadElement(entry.note); const target: ScoreNoteRef = entry.voice === undefined ? Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.globalIndex }) : Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.voiceIndex as number, voice: entry.voice }); this.#registerHitTestElement(element, target); const group = this.#resolveOwnedGraphicalGroup(entry.note); if (group !== null && group !== element) this.#registerHitTestElement(group, target); } } }
   }
-  #registerHitTestElement(element: Element, target: ScoreNoteRef): void { if (!this.#noteRefByElement.has(element)) { this.#noteRefByElement.set(element, target); return; } const previous = this.#noteRefByElement.get(element); if (previous === null || previous === undefined) return; if (!sameScoreNoteRef(previous, target)) this.#noteRefByElement.set(element, null); }
+  #registerHitTestElement(element: Element, owner: HitTestOwner): void {
+    if (!this.#noteRefByElement.has(element)) { this.#noteRefByElement.set(element, owner); return; }
+    const previous = this.#noteRefByElement.get(element); if (previous === undefined || previous === AMBIGUOUS_HIT_OWNER) return;
+    if (owner === AMBIGUOUS_HIT_OWNER) { this.#noteRefByElement.set(element, AMBIGUOUS_HIT_OWNER); return; }
+    if (previous === NO_NOTE_HIT_OWNER && owner === NO_NOTE_HIT_OWNER) return;
+    if (isScoreNoteRefOwner(previous) && isScoreNoteRefOwner(owner) && sameScoreNoteRef(previous, owner)) return;
+    this.#noteRefByElement.set(element, AMBIGUOUS_HIT_OWNER);
+  }
   #resetHitTestIndex(): void { this.#noteRefByElement = new WeakMap(); }
   #ensureHighlightStyle(): void { if (this.#container.querySelector("style[data-st-score-highlight-style]") !== null) return; const document = this.#container.ownerDocument; const style = document.createElement("style"); style.setAttribute("data-st-score-highlight-style", "true"); style.textContent = '[data-st-score-highlight="true"] { fill: #ff8c00 !important; stroke: #ff8c00 !important; } [data-st-score-highlight="true"] * { fill: #ff8c00 !important; stroke: #ff8c00 !important; }'; this.#container.prepend(style); }
 }
