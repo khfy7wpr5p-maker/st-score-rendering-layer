@@ -63,7 +63,7 @@ let browser;
 try {
   browser = await webkit.launch({ headless: true });
   const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 390, height: 500 },
     deviceScaleFactor: 2,
     hasTouch: true,
   });
