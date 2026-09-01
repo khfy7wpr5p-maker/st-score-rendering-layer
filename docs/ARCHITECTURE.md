@@ -1,148 +1,527 @@
-# Architecture
+# Production Architecture
 
-## Purpose
+This document describes the architecture implemented on production `main`. Code and executable tests are authoritative when older stage/history text conflicts with this document.
 
-`st-score-rendering-layer` is the stable notation-presentation boundary shared by ST projects. Consumers bind to ST-owned contracts, never to OSMD internals.
+Implementation roots:
 
-## Layering
+- `packages/contracts/src/index.ts`
+- `packages/renderer-core/src/index.ts`
+- `packages/adapter-osmd/src/index.ts`
+- `packages/adapter-osmd-headless/src/index.ts`
+- `packages/browser-host/src/index.ts`
+- `packages/accessibility/src/index.ts`
+- `scripts/export-workstation-runtime.mjs`
+- `scripts/export-workstation-runtime-with-cursor.mjs`
+- `scripts/export-browser-runtime.mjs`
 
-```text
-ST Music Workstation / SesliTab / TAB Engine / ScoreMosaic / Score Restore
-                                  |
-                                  v
-                   @st/score-renderer-contracts
-                         |                 |
-                         v                 v
-              @st/score-renderer-core   @st/score-renderer-accessibility
-                         |                 |
-                +--------+--------+        | ST semantic map + resolver
-                |                 |        v
-                v                 v    rendered DOM target
-      @st/score-renderer-osmd   @st/score-renderer-osmd-headless
-                |                 |
-                +--------+--------+
-                         |
-                         v
-                OpenSheetMusicDisplay
+## 1. System purpose
+
+`st-score-rendering-layer` is the ST-owned notation **presentation boundary**. It isolates consumer applications from renderer-vendor APIs while providing a small renderer contract, browser/headless OSMD adapters, interaction primitives, accessibility presentation metadata and exported browser runtime assets.
+
+The production browser renderer uses OpenSheetMusicDisplay (OSMD) `2.1.2` with an SVG backend.
+
+## 2. Scope and non-goals
+
+### Owned here
+
+- bounded in-memory MusicXML source validation;
+- renderer lifecycle contracts;
+- MusicXML-to-SVG presentation through the OSMD adapter;
+- SVG export;
+- measure cursor delegation;
+- note highlight presentation state;
+- deterministic rendered-note location (`ScoreNoteRef`);
+- browser client-point hit-testing against rendered notes;
+- part visibility delegation;
+- validated guitar TAB presentation capability;
+- headless Chrome/Chromium SVG rendering and deterministic digest support;
+- reversible accessibility metadata overlay;
+- ST-owned browser/Workstation runtime asset export.
+
+### Not owned here
+
+- file upload or application navigation;
+- PDF/image recognition or OMR;
+- MXL archive decoding;
+- JSON/ScoreGraph import;
+- canonical score correction or editing;
+- pitch/duration/voice musical authority;
+- playback, transport, tempo, MIDI scheduling or audio output;
+- authentication/business UI;
+- persistent selected-note application state;
+- consumer canonical-note identity.
+
+There is **no ScoreGraph implementation in this repository**. The renderer receives MusicXML text and delegates parsing, graphical model construction, layout and notation drawing to OSMD. Any ScoreGraph/canonical model belongs upstream or to a consumer.
+
+## 3. High-level architecture
+
+```mermaid
+flowchart TD
+  Consumer[Consumer / host application]
+  Runtime[BrowserScoreHost or exported runtime]
+  Contracts[@st/score-renderer-contracts]
+  Core[@st/score-renderer-core]
+  Adapter[@st/score-renderer-osmd]
+  Vendor[OpenSheetMusicDisplay 2.1.2]
+  SVG[SVG DOM in owned container]
+  Interaction[DOM ownership / hit-test index]
+  A11y[@st/score-renderer-accessibility]
+
+  Consumer --> Runtime
+  Runtime --> Contracts
+  Runtime --> Core
+  Runtime --> Adapter
+  Adapter --> Core
+  Adapter --> Contracts
+  Adapter --> Vendor
+  Vendor --> SVG
+  SVG --> Interaction
+  Interaction --> Runtime
+  A11y -. injected RenderedTargetResolver .-> SVG
 ```
 
-Future renderer implementations may sit beside the OSMD adapters while preserving the same ST-owned contracts. The accessibility package is renderer-vendor neutral and receives rendered targets through an injected resolver rather than importing OSMD.
+The browser-host package does not depend directly on `opensheetmusicdisplay`; vendor ownership ends in `@st/score-renderer-osmd`.
 
-### Contracts
+## 4. Import and rendering pipeline
 
-Owns vendor-neutral types, capabilities and lifecycle interfaces. It must have zero dependency on OSMD, DOM, network or consumer repositories.
+The production input pipeline is intentionally narrow:
 
-`ScoreNoteRef` is a deterministic rendered-note locator. `noteIndex` is zero-based within the selected `partId` and `measureIndex`, after optional MusicXML/OSMD voice filtering, traversing instrument staff order, staff entries, graphical voice entries and notes. This keeps consumer-facing note references independent from OSMD object identities.
+```mermaid
+flowchart LR
+  XML[In-memory MusicXML string]
+  Validate[validateScoreSource]
+  Host[BrowserScoreHost]
+  Load[OsmdRenderer.load]
+  OSMDLoad[OSMD load / vendor parse]
+  Render[OsmdRenderer.render]
+  Layout[OSMD layout + SVG rendering]
+  Index[rebuildHitTestIndex]
+  Output[Rendered SVG DOM]
 
-### Renderer core
-
-Owns source validation, registry/lifecycle behavior and shared errors. It must remain browser-vendor neutral.
-
-### Browser OSMD adapter
-
-`@st/score-renderer-osmd` owns every browser import from `opensheetmusicdisplay` and maps ST options to OSMD. Consumers must not import OSMD directly. OSMD CommonJS/ESM interop is contained at this boundary.
-
-For R7 the adapter exposes `resolveRenderedNoteElement(ScoreNoteRef)`. The method returns only a DOM `Element`; it never exposes an OSMD model object. This gives ST-owned presentation helpers a narrow rendered-target boundary without making accessibility semantics vendor-owned.
-
-### Headless OSMD adapter
-
-`@st/score-renderer-osmd-headless` is a separate server/CI adapter. It launches a controlled local Chrome/Chromium process around the exact-pinned local OSMD bundle and returns SVG output. It intentionally does not claim interactive cursor, note-highlight or part-visibility capabilities.
-
-The headless adapter accepts only validated in-memory MusicXML, writes a restricted temporary local fixture, blocks page network access with CSP, bounds process time/output, deletes temporary state in `finally`, and keeps the browser sandbox enabled by default. GitHub-hosted CI explicitly opts into `--no-sandbox` because of runner constraints; that opt-in is not the package default.
-
-### Accessibility bridge
-
-`@st/score-renderer-accessibility` maps ST-owned semantic note entries to already-rendered DOM targets through an injected `RenderedTargetResolver`.
-
-It does not parse MusicXML, infer musical meaning from SVG, inspect OSMD model objects, synthesize speech text, or own application language. Consumers such as SesliTab may provide Turkish rhythmic descriptions or other semantic labels from their canonical score model. The bridge only applies reversible presentation metadata (`aria-label`, role, focus order and an ST marker) to the resolved target.
-
-Accessibility application is fail-closed in two phases: every semantic entry is validated and every rendered target is resolved before any DOM attribute is changed. Duplicate semantic references, duplicate resolved DOM targets, missing targets, control characters, oversized labels and oversized maps are rejected. `clear()`/`dispose()` restore the exact pre-existing attributes captured before the overlay was applied.
-
-## Consumer boundaries
-
-- `st-music-workstation`: browser score view; no renderer work in realtime audio callback paths.
-- `seslitab-guitar-reader`: visual score/TAB view; accessibility semantics remain ST-owned.
-- `musicxml-to-guitar-tab-engine`: renderer is validation/output only, never the fingering solver.
-- `scoremosaic-platform`: visual QA of normalized MusicXML; never the OMR engine.
-- `st-score-restore-engine`: before/after rendering and regression evidence only.
-- `ST-Orchestration`: full-score presentation only.
-- `st-score-editor-core`: preview/read side only; editor remains authoritative write side.
-
-Consumer repositories remain unchanged through R7. Cross-repository adoption begins only at the explicit R8 integration gate.
-
-## R8-B4 Workstation offline runtime delivery
-
-R8-B4 introduces a renderer-owned **build-time export**, not a new consumer/vendor dependency. `scripts/export-workstation-runtime.mjs` assembles the already-built ST browser host, contracts, renderer core and OSMD adapter with the exact installed OSMD browser bundle into `dist/workstation-runtime`.
-
-The exported directory is a self-contained presentation asset boundary:
-
-```text
-st-score-rendering-layer
-        |
-        | build-time export
-        v
-ST-owned Workstation runtime
-  |- index.html
-  |- workstation-bootstrap.mjs
-  |- modules/contracts.js
-  |- modules/renderer-core.js
-  |- modules/adapter-osmd.js
-  |- modules/browser-host.js
-  |- vendor/opensheetmusicdisplay.min.js
-  |- licenses/opensheetmusicdisplay-BSD-3-Clause.txt
-  `- runtime-manifest.json
-        |
-        | consumer embeds local assets
-        v
-ST Music Workstation presentation/WebView boundary
+  XML --> Validate --> Host --> Load --> OSMDLoad --> Render --> Layout --> Output --> Index
 ```
 
-The Workstation must consume this directory as opaque ST-owned presentation assets. It must not import `opensheetmusicdisplay`, depend on OSMD types, load MusicXML by URL, or expose vendor objects across the consumer boundary. OSMD remains physically present only as a renderer-owned vendor runtime asset behind the ST adapter.
+`validateScoreSource()` checks only the ST source contract: source kind, non-empty content, NUL rejection and byte limit. It is not a MusicXML semantic validator. Vendor parsing/layout failures propagate from OSMD.
 
-`runtime-manifest.json` records the renderer source revision, ST contract version, package versions, exact OSMD version/license metadata, byte sizes and SHA-256 digests for exported assets. A consumer integration must pin a full renderer commit SHA and verify that the exported manifest reports that same revision before embedding the assets. A moving branch, tag-only reference or unverified runtime directory is not an acceptable production input.
+Supported source kinds at the ST contract boundary:
 
-The exported runtime installs the ST-owned Workstation bridge on top of `BrowserScoreHost`. It accepts only bounded in-memory MusicXML and ST render options, rejects contract mismatch or malformed replacement requests, clears stale presentation state before/after failed replacement, rejects concurrent replacement, and exposes no filesystem, shell, network, audio, MIDI, plugin or AI authority.
+| Source | Status |
+| --- | --- |
+| in-memory MusicXML text | SUPPORTED |
+| MXL/compressed MusicXML | UNSUPPORTED |
+| PDF | UNSUPPORTED |
+| image/photo | UNSUPPORTED |
+| JSON / ScoreGraph | UNSUPPORTED |
+| URL/network source | UNSUPPORTED |
 
-Runtime page policy is offline-first: the generated CSP sets `connect-src 'none'`, and all JavaScript/module/vendor inputs are local files in the export. The exporter performs no download or package installation; dependency acquisition remains outside this runtime assembly step.
+An upstream OMR/correction system must first produce MusicXML text before this repository can render it.
 
-R8-B4 renderer evidence requires both the export/security unit contract and a real Chrome/Chromium fixture that loads the exported asset graph, renders real MusicXML to SVG, proves contract-mismatch stale-output clearing, and proves recovery with a subsequent valid render. Consumer-side WebView embedding is a separate proof and must not weaken these renderer gates.
+## 5. Score data and identity model
 
-## Capability policy
+The repository does not own a canonical semantic score graph. Its stable presentation references are defined in `packages/contracts/src/index.ts`.
 
-A feature may be advertised only after its adapter behavior and the relevant real-runtime fixture are tested.
+`ScoreNoteRef`:
 
-- R2 established `musicxml-render` and `svg-export` at the adapter contract boundary.
-- R3 proved real OSMD 2.1.2 MusicXML-to-SVG rendering in Chrome/Chromium.
-- R4 advertises `cursor`, `note-highlight` and `part-visibility` after unit tests plus real-browser evidence for the underlying OSMD cursor, graphical-note SVG and instrument visibility primitives.
-- R5 advertises `tablature` only after a real-browser guitar fixture proves an OSMD `Staff.isTab` staff with six lines and renders distinct fret labels from MusicXML technical string/fret data.
-- R6 advertises `headless` only on `@st/score-renderer-osmd-headless`, after real Chrome/Chromium rendering, repeated-render determinism checks, TAB semantic checks and an exact committed SHA-256 visual baseline for OSMD 2.1.2.
-- R7 keeps accessibility outside `ScoreRendererCapability`: it is an ST-owned semantic overlay, not a renderer-vendor capability. R7 is complete only when unit tests and a real-browser OSMD fixture prove reversible ARIA/focus application against actual rendered note elements.
-- Note highlighting is ST-owned, reversible SVG state; it must not overwrite source/MusicXML note colors.
+```ts
+{
+  partId: string;
+  measureIndex: number;
+  noteIndex: number;
+  voice?: number;
+}
+```
 
-## Visual regression policy
+The browser OSMD adapter derives this locator from OSMD graphical traversal:
 
-The R6 baseline is tied to the committed fixture and exact OSMD version. A digest change is a review gate, not an automatic baseline update. The SVG must first satisfy semantic assertions such as expected title and TAB fret labels; only then is its deterministic digest compared with the committed baseline.
+```text
+part / Instrument.IdString
+→ instrument staves sorted by idInMusicSheet
+→ graphical staff-entry order
+→ graphical voice-entry order
+→ graphical note order
+```
 
-## Security boundaries
+When a safe MusicXML/OSMD voice id exists, `noteIndex` is counted within that voice. Otherwise `voice` is omitted and `noteIndex` is the unfiltered part+measure traversal index.
 
-- Score loading accepts in-memory MusicXML only; URL/network loading is outside the renderer contract.
-- Input size validation remains fail-closed.
-- Consumer-supplied highlight class names are restricted to one validated CSS class token.
-- Missing parts, measures, notes or unsupported runtime primitives fail closed rather than silently degrading.
-- Headless execution uses argv-based process spawning, never a shell command string.
-- Headless browser output and execution time are bounded.
-- Headless page network access is disabled through CSP and Chrome background-network suppression flags.
-- Accessibility labels are bounded, single-line printable strings; no `innerHTML` is used.
-- Accessibility maps are size-bounded and duplicate semantic/DOM targets are rejected.
-- Accessibility target resolution completes before DOM mutation; previous ARIA/tabindex state is restored on clear/dispose.
-- Accessibility bridge installs no network, parser, speech, AI, plugin or keyboard-event execution path.
-- R8-B4 exported browser runtime disables page connections through CSP and contains no runtime network loader.
-- R8-B4 runtime output names are bounded simple directory names; path traversal is rejected.
-- R8-B4 replacement errors clear stale rendered output before control returns to the consumer.
-- Renderer code must never enter realtime audio callback paths.
+### Identity boundaries
 
-## Dependency direction
+| Identity | Owner | Meaning |
+| --- | --- | --- |
+| canonical/source identity | upstream/consumer | authoritative musical event identity, if the consumer has one |
+| `ScoreNoteRef` | ST renderer contract | deterministic rendered-note locator |
+| OSMD graphical object identity | OSMD adapter only | vendor-internal graphical object; never a consumer contract |
+| SVG/DOM element identity | browser render instance | ephemeral rendered target; rebuilt/reindexed after render changes |
 
-Dependency arrows may only point inward toward contracts/core and outward from adapters to their vendor. A consumer-to-OSMD edge is an architecture violation. Accessibility depends only on ST references and injected rendered-target resolvers; OSMD remains an implementation detail of the adapter layer rather than the semantic authority.
+`ScoreNoteRef.noteIndex` must never be treated as a consumer-global note-array index.
 
-The R8-B4 exported runtime does not change dependency direction: it packages an existing renderer-owned vendor edge for local delivery. Consumers depend on the ST runtime boundary and its manifest, not on OSMD as a source/API dependency.
+## 6. Rendering ownership
+
+ST does not implement separate page/system/staff/measure/note drawing engines. Those graphical responsibilities are delegated to OSMD.
+
+ST-owned layers are instead:
+
+1. source/contract validation;
+2. adapter option mapping;
+3. vendor isolation;
+4. owned presentation container lifecycle;
+5. rendered-note locator traversal;
+6. interaction/highlight/accessibility overlays;
+7. exported runtime packaging/integrity.
+
+OSMD produces the SVG DOM. `exportSvg()` serializes the SVG elements currently in the owned container.
+
+## 7. Coordinate model
+
+There is no ST-owned score-coordinate transform pipeline.
+
+The interaction API accepts browser viewport coordinates:
+
+```ts
+{ clientX: number; clientY: number }
+```
+
+The adapter calls `document.elementFromPoint(clientX, clientY)` and walks the returned DOM ancestry until the renderer container.
+
+```mermaid
+flowchart LR
+  Event[Host touch/pointer event]
+  Client[clientX / clientY]
+  Browser[document.elementFromPoint]
+  DOM[SVG DOM ancestry]
+  Map[renderer WeakMap ownership]
+  Ref[ScoreNoteRef or null]
+
+  Event --> Client --> Browser --> DOM --> Map --> Ref
+```
+
+The browser therefore accounts for current scrolling and rendered CSS/SVG transforms when resolving the DOM hit. This repository performs no manual scroll-offset, device-pixel-ratio, pinch-zoom or score-space calculation.
+
+### Visual geometry vs interaction geometry
+
+**Visual geometry** is the geometry OSMD renders into SVG.
+
+**Interaction geometry** is DOM ownership registered by the ST adapter:
+
+- exact notehead element; and
+- when uniquely owned, the graphical-note group and descendants such as stem/flag/dot.
+
+Interaction geometry is therefore not identical to the visible notehead, but it is also not an arbitrary expanded bounding box. Shared graphical groups fail closed. There is no radius/nearest-note fallback.
+
+## 8. Note interaction architecture
+
+The renderer does not install pointer/touch handlers. The host application owns gesture/event binding and decides when to call `hitTestNote()`.
+
+```mermaid
+flowchart TD
+  Pointer[Host pointer/touch event]
+  Point[clientX/clientY]
+  Hit[BrowserScoreHost.hitTestNote]
+  Adapter[OsmdRenderer.resolveNoteAtClientPoint]
+  DOM[elementFromPoint + ancestry]
+  Ref[ScoreNoteRef or null]
+  Resolve[Consumer canonical resolver]
+  Select[Consumer selection state]
+  Highlight[BrowserScoreHost.highlight]
+
+  Pointer --> Point --> Hit --> Adapter --> DOM --> Ref
+  Ref --> Resolve --> Select
+  Select --> Highlight
+```
+
+Important ownership rule: **selection state is not stored by `BrowserScoreHost` or `OsmdRenderer`**. The renderer owns only reversible highlight presentation. Deselect behavior belongs to the consumer, typically by clearing consumer selection and calling `clearHighlights()`.
+
+Ambiguous DOM ownership, rests, whitespace, outside nodes and unmapped symbols return `null`. No pitch matching or nearest-note inference is allowed.
+
+See [NOTE-INTERACTION.md](NOTE-INTERACTION.md).
+
+## 9. Render lifecycle
+
+### BrowserScoreHost replacement lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> Ready
+  Ready --> Rendering: renderMusicXml
+  Rendering --> Ready: validation/load/render/contract success
+  Rendering --> Empty: validation/load/render/contract failure
+  Ready --> Rendering: replacement request
+  Empty --> Rendering: valid new request
+  Ready --> Disposed: dispose
+  Empty --> Disposed: dispose
+  Disposed --> [*]
+```
+
+Detailed replacement sequence:
+
+```text
+renderMusicXml(request)
+→ reject concurrent render
+→ construct ScoreSource
+→ validateScoreSource
+→ dispose old renderer + clear container
+→ create fresh renderer
+→ require musicxml-render + svg-export
+→ renderer.load
+→ renderer.render
+→ verify returned contract version
+→ return ScoreRenderResult
+```
+
+If validation, loading, rendering, capability checking or contract checking fails, the current renderer is disposed and the container is cleared. Stale notation is not retained after a failed replacement.
+
+The adapter itself can also rerender after `setPartVisible()`. Highlight and hit-test indexes are cleared/rebuilt around render changes.
+
+### Resize/reflow
+
+`ScoreRenderOptions.autoResize` is mapped to OSMD and defaults to `true` in the browser adapter. This repository does **not** implement a `ResizeObserver`, orientation-change listener, font-load listener or Safari-specific reflow controller. Any OSMD-internal resize behavior is vendor behavior, not an ST lifecycle contract.
+
+No ST code restores a selection after rerender because selection is consumer-owned. A deterministic `ScoreNoteRef` can remain equal when traversal is unchanged; DOM identities are ephemeral and the hit-test index is rebuilt.
+
+## 10. State management
+
+```mermaid
+flowchart TD
+  HostState[Consumer state: selected note / app / playback]
+  BH[BrowserScoreHost]
+  Renderer[OsmdRenderer]
+  Vendor[OSMD instance]
+  DOM[SVG DOM]
+
+  HostState -->|MusicXML + options| BH
+  BH -->|load/render| Renderer
+  Renderer --> Vendor --> DOM
+  DOM -->|hit-test result| Renderer --> BH -->|ScoreNoteRef|null| HostState
+  HostState -->|highlight target| BH --> Renderer --> DOM
+```
+
+ST-owned runtime state:
+
+- `BrowserScoreHost`: current renderer reference, disposed flag, render-in-flight flag;
+- `OsmdRenderer`: OSMD instance, loaded/rendered flags, highlight map, hit-test `WeakMap`;
+- headless renderer: current source and last SVG pages;
+- accessibility bridge: applied target snapshots and focus order.
+
+Not present here: canonical score state, selected-note state, playback state, global app state or persistent viewport model.
+
+## 11. Playback/audio boundary
+
+There is no playback controller, transport, tempo engine, MIDI scheduler, synthesizer or audio output in this repository.
+
+Accordingly, these are separate concepts:
+
+- source accepted by renderer;
+- score successfully rendered;
+- interaction available;
+- playback available in a consumer;
+- OMR/correction fully validated.
+
+The renderer cannot declare a score “playable” or “unplayable”. Incomplete OMR must not be blocked from playback **by this renderer**, because this repository has no playback gate. Any playback policy must be implemented and documented in the host application independently.
+
+## 12. Host application boundary
+
+Renderer/browser-host responsibilities:
+
+- source contract validation;
+- presentation lifecycle;
+- rendering and SVG export;
+- renderer capability checks;
+- cursor/highlight/hit-test primitives;
+- presentation-only accessibility bridge.
+
+Host responsibilities:
+
+- file upload/import UX;
+- converting PDF/image/MXL/etc. into supported input before renderer invocation;
+- toolbar/navigation/modals;
+- app/global state;
+- pointer/touch listener registration;
+- selected-note/deselection state;
+- canonical score resolution;
+- playback controls/audio state;
+- authentication/business rules.
+
+## 13. SesliTab integration contract
+
+```mermaid
+flowchart TD
+  SesliTab[SesliTab host state / UI]
+  Runtime[ST browser runtime or BrowserScoreHost]
+  Adapter[OsmdRenderer]
+  OSMD[OSMD]
+  SVG[SVG]
+
+  SesliTab -->|MusicXML + render options| Runtime
+  Runtime --> Adapter --> OSMD --> SVG
+  SesliTab -->|clientX/clientY| Runtime
+  Runtime -->|ScoreNoteRef or null| SesliTab
+  SesliTab -->|canonical resolve + selection| SesliTab
+  SesliTab -->|highlight same ScoreNoteRef| Runtime
+```
+
+The safe reverse event flow is:
+
+```text
+rendered DOM hit
+→ renderer ScoreNoteRef
+→ host callback / imperative result
+→ SesliTab canonical resolver
+→ SesliTab selection state
+→ renderer highlight
+```
+
+This repository does not prove or define SesliTab's canonical mapping. It only defines the renderer side of the boundary. See [CONSUMER-INTEGRATION.md](CONSUMER-INTEGRATION.md).
+
+## 14. OMR / correction / Score Restore boundary
+
+The renderer:
+
+- does not perform OMR;
+- does not correct MusicXML;
+- does not select between OMR engines;
+- does not own confidence/provenance semantics;
+- does not mutate a source score as part of selection/highlight;
+- can render MusicXML produced by external systems if it satisfies the renderer input contract and OSMD can parse/render it.
+
+ST Score Restore, ST OMR Correction Engine, ScoreMosaic, Audiveris-derived producers and other recognizers are upstream producers/consumers, not dependencies of this repository.
+
+```mermaid
+flowchart LR
+  OMR[OMR / correction / Score Restore]
+  XML[MusicXML text]
+  Renderer[ST Score Rendering Layer]
+  SVG[SVG presentation]
+
+  OMR --> XML --> Renderer --> SVG
+  Renderer -. no correction authority .-> OMR
+```
+
+## 15. Guitar / tablature support
+
+Support means **ST contract/test evidence**, not every notation feature OSMD may happen to display.
+
+| Feature | Status | Evidence |
+| --- | --- | --- |
+| standard notation | SUPPORTED | browser/headless MusicXML render gates |
+| TAB staff | SUPPORTED | `tests/browser/osmd-tablature-fixture.html` |
+| combined standard notation + TAB | SUPPORTED | same two-staff guitar fixture |
+| six-line guitar TAB | SUPPORTED | fixture asserts one TAB staff with six lines |
+| MusicXML technical string/fret display | DISPLAY_ONLY | fixture asserts fret labels `7` and `12`; no semantic guitar API |
+| note voice/staff traversal for interaction | SUPPORTED | note-interaction tests |
+| hammer-on | UNSUPPORTED | no ST capability/contract/test |
+| pull-off | UNSUPPORTED | no ST capability/contract/test |
+| slide | UNSUPPORTED | no ST capability/contract/test |
+| bend | UNSUPPORTED | no ST capability/contract/test |
+| technique-specific tie/slur semantics | UNSUPPORTED | no ST technique contract/test |
+
+`UNSUPPORTED` here means “not a guaranteed ST renderer capability”; it does not assert that OSMD can never visually render such MusicXML.
+
+## 16. Mobile / iPhone / Safari architecture
+
+There is no Safari-specific code path and no automated WebKit/Safari job.
+
+The interaction implementation is browser-generic:
+
+- host supplies `clientX/clientY`;
+- adapter uses `elementFromPoint()`;
+- exact notehead/unique graphical group establishes deterministic ownership;
+- shared groups abstain.
+
+PR #16 records real iPhone/Safari acceptance evidence that exact-notehead-only ownership was too narrow and motivated the unique graphical-group widening. Repository CI itself proves narrow responsive rendering at 320px in Chrome/Chromium, not Safari.
+
+`touch-action`, passive listeners, pinch zoom, safe-area layout and gesture policy are host/application responsibilities unless a future renderer-owned implementation is added.
+
+See [MOBILE-SAFARI.md](MOBILE-SAFARI.md).
+
+## 17. Error and degraded modes
+
+The browser host is intentionally fail-closed for stale presentation: failed replacement clears previous output.
+
+The repository has no generic “partially valid MusicXML” or “partially renderable” state machine. A non-empty source can still fail in OSMD parsing/rendering. Unsupported interactive capability methods fail explicitly.
+
+Headless rendering deliberately has no cursor/highlight/part-visibility capability.
+
+See [DEGRADED-MODES.md](DEGRADED-MODES.md).
+
+## 18. Performance architecture
+
+Verified ST-owned mechanisms:
+
+- hit-test ownership stored in a `WeakMap`;
+- hit-test index rebuilt after render/part-visibility rebuild;
+- hard bound of 200,000 indexed graphical notes per browser render;
+- MusicXML input default bound of 5 MiB;
+- headless browser timeout/output bounds;
+- accessibility map/label bounds;
+- no concurrent browser-host replacement render;
+- exported runtime assets are local and integrity-manifested.
+
+Not implemented as ST architecture: virtualization, incremental page rendering, lazy score pages, memoized layout, geometry cache, custom resize debounce/throttle or spatial hit-test tree. OSMD may have internal optimizations, but they are not ST contracts.
+
+## 19. Public API boundary
+
+All current workspace packages are `private: true`, but each exposes a package `.` entrypoint for internal workspace/runtime use. The stable cross-layer protocol is `SCORE_RENDERER_CONTRACT_VERSION = "0.2.0"`, independent of package SemVer.
+
+The base `ScoreRenderer` interface does **not** require note hit-test. `resolveNoteAtClientPoint()` and `resolveRenderedNoteElement()` are OSMD-adapter extensions; `BrowserScoreHost.hitTestNote()` is the consumer-facing browser-host abstraction.
+
+The exported runtime global exposes a reviewed imperative presentation surface, not vendor objects.
+
+See [PUBLIC-API.md](PUBLIC-API.md).
+
+## 20. Testing architecture
+
+The protected-branch `foundation` workflow performs:
+
+1. TypeScript typecheck/build/unit tests (`npm run check`);
+2. real Chrome/Chromium browser fixtures (`npm run test:browser`);
+3. real headless visual-regression gate (`npm run test:headless`).
+
+There is no automated Safari/WebKit gate and no ScoreGraph/playback/OMR test because those components do not exist here.
+
+See [TESTING.md](TESTING.md).
+
+## 21. Architecture invariants
+
+The following are code/test backed:
+
+1. Consumer code must not require OSMD objects through the ST contract/browser-host boundary.
+2. Accepted ST source kind is bounded in-memory MusicXML only.
+3. Browser replacement failure clears stale renderer-owned presentation.
+4. Only one BrowserScoreHost replacement render may be in flight.
+5. `ScoreNoteRef` is deterministic from rendered traversal; pitch/duration/proximity are not identity inputs.
+6. Ambiguous note DOM ownership fails closed rather than guessing.
+7. Highlighting mutates renderer-owned DOM presentation state, not source MusicXML colors.
+8. Hit-test DOM ownership is rebuilt after render changes; stale DOM is not retained by the current WeakMap index.
+9. Selection/canonical musical authority remains outside the renderer.
+10. Accessibility application resolves all targets before mutation and restores captured attributes on clear/dispose.
+11. Headless adapter does not advertise interactive capabilities.
+12. Exported runtime page policy disables network connections with CSP.
+13. Rendering code has no playback/audio/MIDI/realtime authority.
+
+## 22. Terminology
+
+| Term | Production meaning |
+| --- | --- |
+| Score source | `ScoreSource`, currently MusicXML text only |
+| `ScoreNoteRef` | deterministic rendered-note locator |
+| canonical note | consumer/upstream authoritative musical identity; not implemented here |
+| visual geometry | OSMD-produced SVG geometry |
+| interaction geometry | exact notehead plus uniquely-owned graphical group DOM ownership |
+| hit region | DOM elements that resolve deterministically to one `ScoreNoteRef` |
+| highlight | reversible renderer-owned SVG class/attribute state |
+| selection | consumer-owned application state |
+| browser host | `BrowserScoreHost`, ST-owned presentation/lifecycle boundary |
+| adapter | ST implementation that isolates a renderer vendor |
+| browser runtime | exported consumer-neutral local asset graph exposing `__ST_SCORE_RENDER_HOST__` |
+
+## 23. Detailed documents
+
+- [Production-reality audit](PRODUCTION-REALITY-AUDIT.md)
+- [Adapter contract](ADAPTER-CONTRACT.md)
+- [Browser host](BROWSER-HOST.md)
+- [Note interaction](NOTE-INTERACTION.md)
+- [Mobile / Safari](MOBILE-SAFARI.md)
+- [Consumer / SesliTab integration](CONSUMER-INTEGRATION.md)
+- [Public API](PUBLIC-API.md)
+- [Degraded modes](DEGRADED-MODES.md)
+- [Testing architecture](TESTING.md)
+- [Versioning](VERSIONING.md)
