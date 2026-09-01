@@ -50,21 +50,33 @@ After each successful render, the OSMD adapter builds a bounded renderer-owned D
 - uses a `WeakMap`, so it does not retain stale DOM after render replacement;
 - is rebuilt after render and part-visibility graphic rebuilds;
 - is reset on load, rerender failure and dispose;
-- is bounded to 200,000 graphical note elements per render;
+- is bounded to 200,000 graphical notes per render;
 - never searches for a nearest note.
 
 If two different `ScoreNoteRef` values claim the same graphical DOM element, that element is marked ambiguous and hit-test returns `null` rather than selecting the first note.
 
-### Glyph policy
+### Glyph and exact touch-ownership policy
 
-The pinned OSMD `2.1.2` adapter uses the public graphical-note primitives `getNoteheadSVGs()` and `vfnoteIndex` to map a pitched `GraphicalNote` to its exact rendered notehead. Real-browser research on the pinned version proved that chord members may share `getSVGGElement()` while `getNoteheadSVGs()[vfnoteIndex]` resolves distinct notehead elements. Therefore shared StaveNote SVG groups are not used as exact note identity.
+The pinned OSMD `2.1.2` adapter uses the public graphical-note primitives `getNoteheadSVGs()`, `vfnoteIndex` and `getSVGGElement()`.
+
+The notehead remains the strongest exact identity target. Chord members may share `getSVGGElement()` while `getNoteheadSVGs()[vfnoteIndex]` resolves distinct notehead elements, so an exact notehead descendant always wins over a broader ambiguous ancestor.
+
+For mobile usability, the adapter may additionally register a graphical note group as an interaction owner **only through deterministic DOM ownership**:
+
+- the group is obtained directly from the same exact `GraphicalNote` via `getSVGGElement()`;
+- if exactly one `ScoreNoteRef` owns that group, a hit on its stem/flag/dot/other descendant may resolve to that same exact locator;
+- if multiple different `ScoreNoteRef` values claim the group, the group is marked ambiguous and group-only hits return `null`;
+- a distinct exact notehead inside an ambiguous shared group remains selectable because the more-specific exact notehead already proves identity;
+- no bounding-box expansion, coordinate radius, nearest-note search, pitch matching or consumer-side SVG scraping is introduced.
 
 For a single pitched graphical note, if `vfnoteIndex` is unavailable but `getNoteheadSVGs()` exposes exactly one element, index `0` is accepted as an unambiguous exact-notehead fallback. For multi-note/chord cases a valid `vfnoteIndex` is required; otherwise interaction fails closed. Graphical rests are excluded using the public source-note `isRest()` signal and are never added to the note interaction index.
 
 Hit-test walks only the actual `document.elementFromPoint()` DOM ancestry until the renderer container.
 
 - an exact mapped notehead element or its descendant may resolve to that note;
-- rests, shared StaveNote groups, beams, staff lines, slurs, text, measure whitespace and other unmapped SVG/HTML nodes return `null`;
+- a uniquely-owned graphical note group or its descendant may resolve to that same note;
+- shared/ambiguous graphical groups return `null` unless a more-specific exact notehead descendant already proved identity;
+- rests, beams outside a uniquely-owned note group, staff lines, slurs, text, measure whitespace and other unmapped SVG/HTML nodes return `null`;
 - elements outside the renderer container return `null`;
 - no nearest-note fallback exists;
 - no pitch matching exists.
@@ -110,7 +122,7 @@ Runtime payloads fail closed on malformed or non-plain objects, unknown fields, 
 
 `SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` for this stage.
 
-Reason: the base `ScoreRenderer` interface, `ScoreNoteRef`, existing capability union and existing consumer obligations are unchanged. Hit-test is an additive browser-host/runtime presentation extension, structurally detected at the browser boundary. Runtime consumers already pin and verify an exact renderer revision in addition to the ST contract version.
+Reason: the base `ScoreRenderer` interface, `ScoreNoteRef`, existing capability union and existing consumer obligations are unchanged. The mobile ownership widening remains inside the same browser-adapter hit-test method and does not add a new runtime method or consumer authority. Runtime consumers pin and verify an exact renderer revision in addition to the ST contract version.
 
 A future attempt to add hit-test as a required base `ScoreRenderer` method or new mandatory cross-renderer capability must be reviewed as a separate contract-version decision.
 
