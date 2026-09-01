@@ -55,6 +55,7 @@ test("browser runtime is consumer-neutral and exposes bounded presentation inter
     assert.equal(manifest.scoreRendererContractVersion, "0.2.0");
     assert.equal(manifest.vendor.opensheetmusicdisplay.version, "2.1.2");
     assert.equal(manifest.files.some((entry) => entry.path === "workstation-bootstrap.mjs"), false);
+    assert.doesNotMatch(JSON.stringify(manifest), /playwright/i);
     const bootstrapEntry = manifest.files.find((entry) => entry.path === "browser-bootstrap.mjs");
     assert.ok(bootstrapEntry);
     const bootstrapBytes = await readFile(bootstrapPath);
@@ -63,5 +64,29 @@ test("browser runtime is consumer-neutral and exposes bounded presentation inter
     assert.equal(result.manifest.runtimeTarget, "browser");
   } finally {
     await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test("browser runtime manifest is byte-deterministic for the same source revision", async () => {
+  const revision = "fedcba9876543210fedcba9876543210fedcba98";
+  const firstName = "browser-runtime-determinism-a";
+  const secondName = "browser-runtime-determinism-b";
+  const firstRoot = path.join(repoRoot, "dist", firstName);
+  const secondRoot = path.join(repoRoot, "dist", secondName);
+  await rm(firstRoot, { recursive: true, force: true });
+  await rm(secondRoot, { recursive: true, force: true });
+  try {
+    const first = await exportBrowserRuntime({ outputName: firstName, sourceRevision: revision });
+    const second = await exportBrowserRuntime({ outputName: secondName, sourceRevision: revision });
+    const firstManifest = await readFile(path.join(firstRoot, "runtime-manifest.json"), "utf8");
+    const secondManifest = await readFile(path.join(secondRoot, "runtime-manifest.json"), "utf8");
+
+    assert.equal(firstManifest, secondManifest);
+    assert.deepEqual(first.manifest, second.manifest);
+    assert.doesNotMatch(firstManifest, /playwright/i);
+    assert.equal(first.manifest.rendererSourceRevision, revision);
+  } finally {
+    await rm(firstRoot, { recursive: true, force: true });
+    await rm(secondRoot, { recursive: true, force: true });
   }
 });
