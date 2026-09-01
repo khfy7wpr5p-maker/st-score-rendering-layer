@@ -123,6 +123,47 @@ test("note hit-test follows deterministic part/staff/voice/chord traversal", asy
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), null);
 });
 
+test("detailed hit-test exposes bounded deterministic hit and miss classes", async () => {
+  const harness = createInteractionHarness({ includeRest: true });
+  await renderHarness(harness);
+
+  harness.hit(harness.elements.p1v2n0);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 2 },
+  });
+
+  harness.hit(harness.elements.chordGroup);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS",
+    reason: "AMBIGUOUS_OWNERSHIP",
+  });
+
+  harness.hit(harness.elements.restElement);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS",
+    reason: "NO_NOTE_OWNER",
+  });
+
+  harness.hit(harness.elements.whitespace);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS",
+    reason: "UNMAPPED_ELEMENT",
+  });
+
+  harness.hit(harness.elements.outside);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS",
+    reason: "OUTSIDE_RENDER_CONTAINER",
+  });
+
+  harness.hit(null);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS",
+    reason: "NO_ELEMENT_AT_POINT",
+  });
+});
+
 test("unique graphical note groups widen exact touch ownership while shared chord groups abstain", async () => {
   const harness = createInteractionHarness();
   await renderHarness(harness);
@@ -134,9 +175,17 @@ test("unique graphical note groups widen exact touch ownership while shared chor
     noteIndex: 0,
     voice: 2,
   });
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 12, clientY: 22 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 2 },
+  });
 
   harness.hit(harness.elements.chordGroup);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 12, clientY: 22 }), null);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 12, clientY: 22 }), {
+    kind: "MISS",
+    reason: "AMBIGUOUS_OWNERSHIP",
+  });
 
   harness.hit(harness.elements.p1v1n0);
   assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 12, clientY: 22 }), {
@@ -163,6 +212,10 @@ test("duplicate exact notehead ownership fails closed instead of choosing first 
   await renderHarness(harness);
   harness.hit(harness.elements.p1v1n0);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 5, clientY: 5 }), null);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 5, clientY: 5 }), {
+    kind: "MISS",
+    reason: "AMBIGUOUS_OWNERSHIP",
+  });
 });
 
 test("rests are excluded from exact notehead interaction", async () => {
@@ -170,6 +223,10 @@ test("rests are excluded from exact notehead interaction", async () => {
   await renderHarness(harness);
   harness.hit(harness.elements.restElement);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 5, clientY: 5 }), null);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 5, clientY: 5 }), {
+    kind: "MISS",
+    reason: "NO_NOTE_OWNER",
+  });
   assert.throws(
     () => harness.renderer.resolveRenderedNoteElement({ partId: "P1", measureIndex: 0, noteIndex: 2, voice: 1 }),
     /rest.*no notehead interaction target/i,
@@ -181,8 +238,14 @@ test("hit-test never guesses nearest notes and rejects non-finite coordinates", 
   await renderHarness(harness);
   harness.hit(harness.elements.whitespace);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 100, clientY: 100 }), null);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 100, clientY: 100 }), {
+    kind: "MISS",
+    reason: "UNMAPPED_ELEMENT",
+  });
   assert.throws(() => harness.renderer.resolveNoteAtClientPoint({ clientX: Number.NaN, clientY: 0 }), /finite number/);
   assert.throws(() => harness.renderer.resolveNoteAtClientPoint({ clientX: 0, clientY: Number.POSITIVE_INFINITY }), /finite number/);
+  assert.throws(() => harness.renderer.resolveNoteAtClientPointDetailed({ clientX: Number.NaN, clientY: 0 }), /finite number/);
+  assert.throws(() => harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 0, clientY: Number.POSITIVE_INFINITY }), /finite number/);
 });
 
 test("highlight targets the exact locator and clear removes only renderer-owned state", async () => {
@@ -209,6 +272,10 @@ test("rerender drops stale DOM hit-test ownership", async () => {
   await harness.renderer.render({ autoResize: false });
   harness.hit(oldElement);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), null);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 1, clientY: 1 }), {
+    kind: "MISS",
+    reason: "UNMAPPED_ELEMENT",
+  });
   harness.hit(freshElement);
   assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 });
 });
