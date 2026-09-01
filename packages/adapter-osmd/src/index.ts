@@ -59,7 +59,15 @@ export class OsmdRenderer implements ScoreRenderer {
     let current: Element | null = hit; let resolved: ScoreNoteRef | undefined; let insideContainer = false;
     while (current !== null) {
       if (current === this.#container) { insideContainer = true; break; }
-      if (this.#noteRefByElement.has(current)) { const candidate = this.#noteRefByElement.get(current); if (candidate === null) return null; if (candidate !== undefined) { if (resolved !== undefined && !sameScoreNoteRef(resolved, candidate)) return null; resolved = candidate; } }
+      if (this.#noteRefByElement.has(current)) {
+        const candidate = this.#noteRefByElement.get(current);
+        // An ambiguous broader graphical group must not erase a more-specific
+        // exact notehead descendant that already proved identity. But when the
+        // tap reaches only the ambiguous group (for example a shared chord
+        // StaveNote group), interaction still fails closed.
+        if (candidate === null) { if (resolved === undefined) return null; }
+        else if (candidate !== undefined) { if (resolved !== undefined && !sameScoreNoteRef(resolved, candidate)) return null; resolved = candidate; }
+      }
       current = current.parentElement;
     }
     return insideContainer ? resolved ?? null : null;
@@ -109,9 +117,14 @@ export class OsmdRenderer implements ScoreRenderer {
     if (ElementConstructor === undefined || !(element instanceof ElementConstructor)) throw new Error("OSMD did not expose an exact SVG notehead element for the selected note.");
     return element;
   }
+  #resolveOwnedGraphicalGroup(note: OsmdGraphicalNote): Element | null {
+    const group = note.getSVGGElement?.();
+    const ElementConstructor = this.#container.ownerDocument.defaultView?.Element;
+    return ElementConstructor !== undefined && group instanceof ElementConstructor ? group : null;
+  }
   #rebuildHitTestIndex(): void {
     this.#resetHitTestIndex(); const osmd = this.#ensureOsmd(); const instruments = osmd.Sheet?.Instruments ?? []; const measureCount = osmd.graphic?.measureList?.length ?? 0; let indexedElementCount = 0;
-    for (const instrument of instruments) { for (let measureIndex = 0; measureIndex < measureCount; measureIndex += 1) { const entries = this.#listGraphicalNotes(instrument.IdString, measureIndex); for (const entry of entries) { if (this.#isRest(entry.note)) continue; const element = this.#resolveExactNoteheadElement(entry.note); indexedElementCount += 1; if (indexedElementCount > MAX_HIT_TEST_NOTE_ELEMENTS) throw new RangeError(`Rendered note hit-test index exceeds ${MAX_HIT_TEST_NOTE_ELEMENTS} elements.`); const target: ScoreNoteRef = entry.voice === undefined ? Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.globalIndex }) : Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.voiceIndex as number, voice: entry.voice }); this.#registerHitTestElement(element, target); } } }
+    for (const instrument of instruments) { for (let measureIndex = 0; measureIndex < measureCount; measureIndex += 1) { const entries = this.#listGraphicalNotes(instrument.IdString, measureIndex); for (const entry of entries) { if (this.#isRest(entry.note)) continue; const element = this.#resolveExactNoteheadElement(entry.note); indexedElementCount += 1; if (indexedElementCount > MAX_HIT_TEST_NOTE_ELEMENTS) throw new RangeError(`Rendered note hit-test index exceeds ${MAX_HIT_TEST_NOTE_ELEMENTS} elements.`); const target: ScoreNoteRef = entry.voice === undefined ? Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.globalIndex }) : Object.freeze({ partId: instrument.IdString, measureIndex, noteIndex: entry.voiceIndex as number, voice: entry.voice }); this.#registerHitTestElement(element, target); const group = this.#resolveOwnedGraphicalGroup(entry.note); if (group !== null && group !== element) this.#registerHitTestElement(group, target); } } }
   }
   #registerHitTestElement(element: Element, target: ScoreNoteRef): void { if (!this.#noteRefByElement.has(element)) { this.#noteRefByElement.set(element, target); return; } const previous = this.#noteRefByElement.get(element); if (previous === null || previous === undefined) return; if (!sameScoreNoteRef(previous, target)) this.#noteRefByElement.set(element, null); }
   #resetHitTestIndex(): void { this.#noteRefByElement = new WeakMap(); }
