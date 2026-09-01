@@ -13,9 +13,36 @@ import { OsmdRenderer } from "@st/score-renderer-osmd";
 
 export type BrowserRendererFactory = (container: HTMLElement) => ScoreRenderer;
 export type BrowserNoteHitPoint = Readonly<{ clientX: number; clientY: number }>;
+export type BrowserNoteHitMissReason =
+  | "NO_ELEMENT_AT_POINT"
+  | "OUTSIDE_RENDER_CONTAINER"
+  | "UNMAPPED_ELEMENT"
+  | "AMBIGUOUS_OWNERSHIP"
+  | "NO_NOTE_OWNER";
+export type BrowserRenderEpoch = string;
+export type BrowserRenderResult = ScoreRenderResult & Readonly<{
+  renderEpoch: BrowserRenderEpoch;
+  sourceId?: string;
+}>;
+export type BrowserRenderedHitEvidence = Readonly<{
+  kind: "HIT";
+  renderEpoch: BrowserRenderEpoch;
+  sourceId?: string;
+  target: ScoreNoteRef;
+}>;
+export type BrowserRenderedHitMiss = Readonly<{
+  kind: "MISS";
+  renderEpoch: BrowserRenderEpoch;
+  sourceId?: string;
+  reason: BrowserNoteHitMissReason;
+}>;
+export type BrowserNoteHitDetailedResult = BrowserRenderedHitEvidence | BrowserRenderedHitMiss;
 
 type BrowserNoteHitTestRenderer = ScoreRenderer & Readonly<{
   resolveNoteAtClientPoint(point: BrowserNoteHitPoint): ScoreNoteRef | null;
+}>;
+type BrowserDetailedNoteHitTestRenderer = BrowserNoteHitTestRenderer & Readonly<{
+  resolveNoteAtClientPointDetailed(point: BrowserNoteHitPoint): unknown;
 }>;
 
 export type BrowserScoreHostOptions = Readonly<{
@@ -43,9 +70,23 @@ export class BrowserScoreHostUnavailableError extends Error {
 }
 
 const DEFAULT_RENDERER_FACTORY: BrowserRendererFactory = (container) => new OsmdRenderer(container);
+const EVIDENCE_SOURCE_ID_MAX_LENGTH = 256;
+const NOTE_PART_ID_MAX_LENGTH = 128;
+const HIT_MISS_REASONS: ReadonlySet<BrowserNoteHitMissReason> = new Set([
+  "NO_ELEMENT_AT_POINT",
+  "OUTSIDE_RENDER_CONTAINER",
+  "UNMAPPED_ELEMENT",
+  "AMBIGUOUS_OWNERSHIP",
+  "NO_NOTE_OWNER",
+]);
 
 function hasNoteHitTest(renderer: ScoreRenderer): renderer is BrowserNoteHitTestRenderer {
   return typeof (renderer as Partial<BrowserNoteHitTestRenderer>).resolveNoteAtClientPoint === "function";
+}
+
+function hasDetailedNoteHitTest(renderer: ScoreRenderer): renderer is BrowserDetailedNoteHitTestRenderer {
+  return hasNoteHitTest(renderer) &&
+    typeof (renderer as Partial<BrowserDetailedNoteHitTestRenderer>).resolveNoteAtClientPointDetailed === "function";
 }
 
 function requireFinitePoint(point: BrowserNoteHitPoint): void {
@@ -55,6 +96,73 @@ function requireFinitePoint(point: BrowserNoteHitPoint): void {
   if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) {
     throw new RangeError("Score note hit-test coordinates must be finite numbers.");
   }
+}
+
+function requirePlainObject(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object.`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireAllowedKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>, label: string): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new TypeError(`${label} contains unsupported field '${key}'.`);
+  }
+}
+
+function normalizeScoreNoteRef(value: unknown): ScoreNoteRef {
+  const target = requirePlainObject(value, "Detailed note hit target");
+  requireAllowedKeys(target, new Set(["partId", "measureIndex", "noteIndex", "voice"]), "Detailed note hit target");
+  const partId = target.partId;
+  if (typeof partId !== "string" || partId.length === 0 || partId.length > NOTE_PART_ID_MAX_LENGTH || partId !== partId.trim()) {
+    throw new TypeError("Detailed note hit target partId must be a non-empty bounded string without surrounding whitespace.");
+  }
+  const measureIndex = target.measureIndex;
+  const noteIndex = target.noteIndex;
+  if (!Number.isSafeInteger(measureIndex) || (measureIndex as number) < 0) {
+    throw new RangeError("Detailed note hit target measureIndex must be a non-negative safe integer.");
+  }
+  if (!Number.isSafeInteger(noteIndex) || (noteIndex as number) < 0) {
+    throw new RangeError("Detailed note hit target noteIndex must be a non-negative safe integer.");
+  }
+  const voice = target.voice;
+  if (voice !== undefined && (!Number.isSafeInteger(voice) || (voice as number) < 0)) {
+    throw new RangeError("Detailed note hit target voice must be a non-negative safe integer when supplied.");
+  }
+  return voice === undefined
+    ? Object.freeze({ partId, measureIndex: measureIndex as number, noteIndex: noteIndex as number })
+    : Object.freeze({ partId, measureIndex: measureIndex as number, noteIndex: noteIndex as number, voice: voice as number });
+}
+
+function normalizeDetailedRendererHit(value: unknown):
+  | Readonly<{ kind: "HIT"; target: ScoreNoteRef }>
+  | Readonly<{ kind: "MISS"; reason: BrowserNoteHitMissReason }> {
+  const result = requirePlainObject(value, "Detailed note hit result");
+  if (result.kind === "HIT") {
+    requireAllowedKeys(result, new Set(["kind", "target"]), "Detailed note hit result");
+    return Object.freeze({ kind: "HIT", target: normalizeScoreNoteRef(result.target) });
+  }
+  if (result.kind === "MISS") {
+    requireAllowedKeys(result, new Set(["kind", "reason"]), "Detailed note hit result");
+    if (typeof result.reason !== "string" || !HIT_MISS_REASONS.has(result.reason as BrowserNoteHitMissReason)) {
+      throw new TypeError("Detailed note hit result contains an unsupported miss reason.");
+    }
+    return Object.freeze({ kind: "MISS", reason: result.reason as BrowserNoteHitMissReason });
+  }
+  throw new TypeError("Detailed note hit result kind must be HIT or MISS.");
+}
+
+function boundedEvidenceSourceId(sourceId: string | undefined): string | undefined {
+  if (sourceId === undefined) return undefined;
+  if (sourceId.length === 0 || sourceId.length > EVIDENCE_SOURCE_ID_MAX_LENGTH || sourceId !== sourceId.trim() || sourceId.includes("\u0000")) {
+    return undefined;
+  }
+  return sourceId;
 }
 
 /**
@@ -72,6 +180,9 @@ export class BrowserScoreHost {
   #renderer: ScoreRenderer | undefined;
   #disposed = false;
   #renderInFlight = false;
+  #renderEpochCounter = 0;
+  #activeRenderEpoch: BrowserRenderEpoch | undefined;
+  #activeEvidenceSourceId: string | undefined;
 
   constructor(container: HTMLElement, options: BrowserScoreHostOptions) {
     if (typeof container?.replaceChildren !== "function") {
@@ -97,7 +208,7 @@ export class BrowserScoreHost {
     content: string,
     options: ScoreRenderOptions = {},
     sourceId?: string,
-  ): Promise<ScoreRenderResult> {
+  ): Promise<BrowserRenderResult> {
     this.#requireAvailable();
     if (this.#renderInFlight) {
       throw new BrowserScoreHostUnavailableError(
@@ -140,7 +251,13 @@ export class BrowserScoreHost {
             result.contractVersion,
           );
         }
-        return result;
+        const renderEpoch = this.#nextRenderEpoch();
+        const evidenceSourceId = boundedEvidenceSourceId(sourceId);
+        this.#activeRenderEpoch = renderEpoch;
+        this.#activeEvidenceSourceId = evidenceSourceId;
+        return evidenceSourceId === undefined
+          ? Object.freeze({ ...result, renderEpoch })
+          : Object.freeze({ ...result, renderEpoch, sourceId: evidenceSourceId });
       } catch (error) {
         await this.#resetCurrentRenderer();
         throw error;
@@ -172,6 +289,28 @@ export class BrowserScoreHost {
     return renderer.resolveNoteAtClientPoint(point);
   }
 
+  hitTestNoteDetailed(point: BrowserNoteHitPoint): BrowserNoteHitDetailedResult {
+    requireFinitePoint(point);
+    const renderer = this.#requireRenderer("Detailed note hit-test");
+    if (!hasDetailedNoteHitTest(renderer)) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide detailed note hit-test capability.");
+    }
+    const renderEpoch = this.#activeRenderEpoch;
+    if (renderEpoch === undefined) {
+      throw new BrowserScoreHostUnavailableError("Detailed note hit-test requires an active render epoch.");
+    }
+    const result = normalizeDetailedRendererHit(renderer.resolveNoteAtClientPointDetailed(point));
+    const sourceId = this.#activeEvidenceSourceId;
+    if (result.kind === "HIT") {
+      return sourceId === undefined
+        ? Object.freeze({ kind: "HIT", renderEpoch, target: result.target })
+        : Object.freeze({ kind: "HIT", renderEpoch, sourceId, target: result.target });
+    }
+    return sourceId === undefined
+      ? Object.freeze({ kind: "MISS", renderEpoch, reason: result.reason })
+      : Object.freeze({ kind: "MISS", renderEpoch, sourceId, reason: result.reason });
+  }
+
   async highlight(highlight: ScoreHighlight): Promise<void> {
     const renderer = this.#requireRenderer("Note highlight");
     if (!renderer.capabilities.has("note-highlight")) {
@@ -192,6 +331,14 @@ export class BrowserScoreHost {
     if (this.#disposed) return;
     this.#disposed = true;
     await this.#resetCurrentRenderer();
+  }
+
+  #nextRenderEpoch(): BrowserRenderEpoch {
+    if (this.#renderEpochCounter >= Number.MAX_SAFE_INTEGER) {
+      throw new BrowserScoreHostUnavailableError("Render epoch space is exhausted for this browser host instance.");
+    }
+    this.#renderEpochCounter += 1;
+    return `render-${this.#renderEpochCounter.toString(36)}`;
   }
 
   #requireAvailable(): void {
@@ -215,6 +362,8 @@ export class BrowserScoreHost {
   async #resetCurrentRenderer(): Promise<void> {
     const renderer = this.#renderer;
     this.#renderer = undefined;
+    this.#activeRenderEpoch = undefined;
+    this.#activeEvidenceSourceId = undefined;
     if (renderer !== undefined) {
       try {
         await renderer.dispose();

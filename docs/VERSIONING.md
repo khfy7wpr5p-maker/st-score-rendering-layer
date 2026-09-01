@@ -61,6 +61,23 @@ The current note hit-test implementation does not require a contract bump becaus
 
 Making hit-test a required base-renderer method/capability or changing `ScoreNoteRef` semantics would require a new compatibility decision.
 
+## Additive editor-bridge evidence
+
+SRL-EB-02/03/04 adds presentation-generation evidence without changing the base renderer protocol:
+
+- successful `BrowserScoreHost.renderMusicXml()` results include an opaque `renderEpoch` and an optional bounded evidence `sourceId`;
+- `BrowserScoreHost.hitTestNoteDetailed()` returns the current render epoch plus normalized hit/miss evidence;
+- interaction-capable exported runtimes add `hitTestNoteDetailed(payload)`;
+- legacy `hitTestNote()` behavior and all existing runtime operations remain unchanged.
+
+`SCORE_RENDERER_CONTRACT_VERSION` therefore remains `0.2.0`. These additions are optional/revision-specific extensions, not new mandatory members of the base `ScoreRenderer` interface.
+
+A consumer must not infer availability of `hitTestNoteDetailed()` merely from seeing contract `0.2.0`, because historical `0.2.0` runtime artifacts predate the extension. Consumers that require it must feature-detect the method and pin/verify an exact renderer source revision and runtime manifest.
+
+A future change that makes the detailed bridge mandatory across the compatibility family, changes existing hit semantics, changes `ScoreNoteRef`, or expands canonical/edit authority requires a new contract-version review.
+
+See [EDITOR-BRIDGE.md](EDITOR-BRIDGE.md).
+
 ## Historical stage identifiers
 
 R0–R8 labels remain useful to understand when evidence was introduced, but they are not version numbers and must not substitute for current package/runtime contract values.

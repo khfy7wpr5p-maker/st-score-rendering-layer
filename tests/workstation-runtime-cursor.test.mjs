@@ -15,7 +15,7 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
-test("runtime host exposes bounded cursor, note hit-test and highlight bridges", async () => {
+test("runtime host exposes bounded cursor, legacy hit-test, detailed hit evidence and highlight bridges", async () => {
   await rm(outputRoot, { recursive: true, force: true });
   try {
     const result = await exportWorkstationRuntimeWithCursor({
@@ -28,6 +28,9 @@ test("runtime host exposes bounded cursor, note hit-test and highlight bridges",
     assert.match(bootstrap, /activeHost\.moveCursor\(\{ partId, measureIndex \}\)/);
     assert.match(bootstrap, /hitTestNote\(payload\)/);
     assert.match(bootstrap, /activeHost\.hitTestNote\(\{ clientX: point\.clientX, clientY: point\.clientY \}\)/);
+    assert.match(bootstrap, /hitTestNoteDetailed\(payload\)/);
+    assert.match(bootstrap, /activeHost\.hitTestNoteDetailed\(\{ clientX: point\.clientX, clientY: point\.clientY \}\)/);
+    assert.match(bootstrap, /Detailed score note hit-test payload/);
     assert.match(bootstrap, /async highlight\(payload\)/);
     assert.match(bootstrap, /activeHost\.highlight/);
     assert.match(bootstrap, /async clearHighlights\(\)/);
