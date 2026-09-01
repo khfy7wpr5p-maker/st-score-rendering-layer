@@ -2,26 +2,22 @@
 
 Program: `SRL-EDITOR-BRIDGE-01`
 
-Fresh-read baseline: `814cddef12cb9150045793b007b1ceab82c25259` on 2026-09-01.
+Current program baseline after merged SRL-EB-05/06: `25ddf4a99ae85cc761ad9606f6bfebad817afe66` on 2026-09-01.
 
-This document freezes the renderer/editor responsibility boundary for SRL-EB-00 and records the additive SRL-EB-01 diagnostic surface introduced on the feature branch. It does not grant canonical edit authority to the renderer.
+This document records the renderer/editor responsibility boundary and the current additive bridge evidence. It does not grant canonical edit authority to the renderer.
 
-## Fresh-read repository evidence
+## Repository evidence
 
 - default branch: `main`
-- active default-branch ruleset: `main`
 - pull request required for `main`
 - strict required status check: `foundation`
-- required check on baseline SHA: success
-- open pull requests at freeze: none
-- open issues at freeze: none
 - renderer contract: `0.2.0`
 - browser renderer vendor dependency: exact `opensheetmusicdisplay` `2.1.2`
-- browser host currently exposes legacy `hitTestNote(point): ScoreNoteRef | null`
-- generic browser runtime currently exposes legacy note-hit/highlight presentation operations
-- no automated Safari/WebKit gate exists in the current repository
-
-The REST branch-protection endpoint was not readable through the integration, but the repository ruleset endpoint was readable and is authoritative for this freeze: the active ruleset targets the default branch, prevents deletion/non-fast-forward updates, requires pull requests, and requires the strict `foundation` check.
+- browser host exposes legacy `hitTestNote(point): ScoreNoteRef | null` and bounded detailed hit evidence
+- render results/detailed hit evidence carry a render epoch so stale evidence can be detected across replacement renders
+- generic browser runtime exposes bounded presentation hit/highlight operations without Editor Core authority
+- Chromium automation covers the committed browser fixture suite
+- SRL-EB-07 adds a pinned Playwright WebKit engine gate for bounded baseline rendering and note interaction; physical iPhone/Safari remains a separate acceptance boundary
 
 ## Frozen responsibility matrix
 
@@ -29,8 +25,9 @@ The REST branch-protection endpoint was not readable through the integration, bu
 | --- | --- | --- | --- |
 | MusicXML presentation | owns | supplies source | does not own rendering |
 | DOM/SVG hit testing | owns exact renderer-side evidence | supplies browser coordinates | does not inspect DOM/SVG |
-| `ScoreNoteRef` | owns as rendered locator | may map it for current render | never treats it as canonical identity |
-| canonical note identity | does not own | bridges current mapping | owns through revision-bound `SemanticAddress` |
+| `ScoreNoteRef` | owns as rendered locator | maps only for current render | never treats it as canonical identity |
+| render epoch | owns presentation-generation evidence | rejects/rebinds stale mapping | may use host-provided current mapping only |
+| canonical note identity | does not own | bridges current mapping | owns through revision-bound semantic identity |
 | edit transaction | does not own | invokes editor API | owns |
 | selected-note application state | does not own | owns | owns canonical selection semantics |
 | highlight presentation | owns renderer DOM state | requests current highlight | does not own renderer DOM |
@@ -40,47 +37,40 @@ The REST branch-protection endpoint was not readable through the integration, bu
 
 ## Identity invariant
 
-`ScoreNoteRef` is a deterministic rendered-note locator only. It is not a global event id, canonical array index, `SemanticAddress`, pitch identity, or durable identity across replacement renders.
+`ScoreNoteRef` is a deterministic rendered-note locator only. It is not a global event id, canonical array index, semantic edit address, pitch identity, or durable DOM identity across replacement renders.
 
 The shared bridge direction remains:
 
 ```text
 current editor revision / render projection
 → renderer presentation
-→ exact rendered hit evidence
+→ exact rendered hit evidence + render epoch
 → host validates current render mapping
-→ Editor Core resolves current SemanticAddress
+→ Editor Core resolves current canonical semantic identity
 → canonical selection/edit
 → renderer highlight for the current rendered locator
 ```
 
 No renderer package imports Editor Core as canonical authority.
 
-## Current legacy hit path
+## Current hit path
 
 ```text
 host pointer/touch event
 → clientX/clientY
-→ BrowserScoreHost.hitTestNote
-→ OsmdRenderer.resolveNoteAtClientPoint
+→ BrowserScoreHost hit-test
+→ OsmdRenderer client-point resolution
 → document.elementFromPoint
 → renderer-owned DOM ancestry ownership index
-→ ScoreNoteRef or null
+→ bounded HIT/MISS evidence
+→ ScoreNoteRef or null legacy projection
 ```
 
-Exact noteheads are strongest targets. A uniquely owned graphical note group may widen ownership to stem/flag/dot descendants. Shared ownership abstains. Rests are not selectable note targets. No nearest-note, radius expansion, pitch matching, distance ranking, or consumer-side SVG scraping is admitted.
+Exact noteheads are strongest targets. A uniquely owned graphical-note group may widen ownership to stem/flag/dot descendants. Shared ownership abstains. Rests are not selectable note targets. No nearest-note, radius expansion, pitch matching, distance ranking, or consumer-side SVG scraping is admitted.
 
-## SRL-EB-01 additive diagnostic surface
+## Detailed diagnostic surface
 
-The OSMD adapter adds:
-
-```ts
-resolveNoteAtClientPointDetailed(point):
-  | { kind: "HIT"; target: ScoreNoteRef }
-  | { kind: "MISS"; reason: HitMissReason }
-```
-
-Bounded miss reasons:
+The concrete browser path exposes bounded hit/miss evidence. Miss reasons remain explicit and finite, including:
 
 - `NO_ELEMENT_AT_POINT`
 - `OUTSIDE_RENDER_CONTAINER`
@@ -88,49 +78,71 @@ Bounded miss reasons:
 - `AMBIGUOUS_OWNERSHIP`
 - `NO_NOTE_OWNER`
 
-The legacy `resolveNoteAtClientPoint(point): ScoreNoteRef | null` remains present and converts every detailed miss back to `null`. Thus SRL-EB-01 adds observability without adding a fallback selection path.
+The legacy `ScoreNoteRef | null` surface remains available and collapses detailed misses to `null`. Diagnostics add observability; they do not add fallback selection authority.
 
-`NO_NOTE_OWNER` is explicit renderer evidence for rendered ownership that is known not to be a selectable note target, currently including indexed rest graphical groups. `UNMAPPED_ELEMENT` means the browser hit is inside the renderer container but no renderer-owned note/rest ownership was found in its ancestry.
+Detailed results contain bounded plain data only. DOM elements, OSMD objects, WeakMaps, score source contents and raw persisted browser-event objects do not escape the adapter.
 
-Detailed results contain only bounded plain data. DOM elements, OSMD objects, WeakMaps, score source contents and raw persisted coordinates do not escape the adapter.
+## Render epoch / stale evidence
 
-## Contract/version decision for PR-A
+A successful render creates current presentation-generation evidence. Detailed hit evidence is bound to that render epoch and, where available, the current source id.
 
-`SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` in PR-A because:
+Replacement rendering advances the epoch. Regression coverage verifies that:
 
-1. the base `ScoreRenderer` interface is unchanged;
-2. the existing browser-host `hitTestNote()` surface is unchanged;
-3. the exported browser runtime is unchanged in PR-A;
-4. the new method is an additive concrete OSMD-adapter extension;
-5. no new authority or dependency is introduced.
+- old rendered DOM targets are detached;
+- old highlight state is cleared;
+- old hit evidence has a different epoch from the new render;
+- the same logical rendered locator can be resolved again only from current DOM evidence;
+- a current `ScoreNoteRef` can be highlighted again after rebind.
 
-Any later exposure of diagnostics through the generic browser runtime must be reviewed again under SRL-EB-03 before merge.
+The epoch is presentation freshness evidence. It is not a canonical score revision id.
 
-## Companion Editor Core boundary
+## SRL-EB-05/06 merged evidence
 
-The companion editor program defines the same shared bridge principle: renderer/browser/DOM/coordinates never become musical authority; external exact-hit evidence must be resolved against the current render/revision mapping, and `SemanticAddress` remains the edit target. Renderer changes therefore must not invent or persist Editor Core canonical identities.
+Merged main `25ddf4a99ae85cc761ad9606f6bfebad817afe66` protects:
 
-## Explicitly deferred after PR-A
+- multiple reversible renderer highlights;
+- rerender cleanup of stale highlight state and DOM hit ownership;
+- fresh versus stale render-epoch evidence;
+- exact notehead and uniquely owned graphical-descendant interaction;
+- shared chord-group ambiguity abstention;
+- real OSMD Chromium fixture coverage at `720px` and `320px`;
+- scroll-before-tap using current client coordinates;
+- direct SVG-surface interaction with no added overlay.
 
-- render epoch / stale evidence token (`SRL-EB-02`)
-- BrowserScoreHost detailed diagnostic exposure (`SRL-EB-03`)
-- exported runtime detailed diagnostic exposure (`SRL-EB-03`)
-- renderer-side shared bridge handoff contract (`SRL-EB-04`)
-- rerender/selection regression expansion (`SRL-EB-05`)
-- mobile 320px regression expansion (`SRL-EB-06`)
-- WebKit feasibility (`SRL-EB-07`)
-- SesliTab consumer diagnostic handoff (`SRL-EB-08`)
-- synchronized final public docs/versioning pass (`SRL-EB-09`)
+## SRL-EB-07 WebKit feasibility
 
-## PR-A no-touch confirmation
+SRL-EB-07 adds a development/test-only exact-pinned Playwright dependency and a WebKit engine gate to the required `foundation` CI path.
 
-No changes are intended to:
+The gate:
 
-- OMR/provider/runtime/gateway/worker behavior;
-- canonical score mutation;
-- Editor Core transaction implementation;
-- SesliTab keypad UI;
+- installs only the required Playwright WebKit engine and system dependencies;
+- serves repository assets from loopback HTTP only;
+- runs baseline MusicXML→SVG evidence;
+- runs the bounded note-interaction fixture, including `720px`/`320px`, rerender, scroll-before-tap, exact note ownership and ambiguity abstention;
+- requires explicit PASS state plus final SVG evidence;
+- reports bounded diagnostics on failure.
+
+This is **WebKit engine evidence, not physical Safari acceptance**. Real iPhone/Safari browser chrome, safe-area behavior, touch/gesture delivery, pinch zoom and consumer-shell lifecycle remain external target-device acceptance concerns.
+
+## Contract/version decision
+
+`SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` because these bridge stages preserve the base renderer authority boundary. Detailed browser evidence, render epochs and multi-engine regression coverage are additive presentation/diagnostic behavior rather than a new cross-renderer canonical-edit contract.
+
+A future change that makes browser hit diagnostics or editor identities mandatory across every renderer requires a separate contract-version review.
+
+## Remaining program work
+
+- `SRL-EB-08` — SesliTab consumer diagnostic/current-render handoff acceptance
+- `SRL-EB-09` — synchronized final public docs/versioning pass
+- physical iPhone/Safari acceptance — external real-device gate, not replaceable by Playwright WebKit
+
+## No-touch invariants
+
+The program must not silently change:
+
+- OMR/provider/runtime/gateway/worker authority;
+- canonical score mutation ownership;
+- Editor Core transaction ownership;
 - playback/audio authorization;
-- Guitar TAB or Violin authority;
-- dependency graph;
-- nearest-note/pitch/proximity fallback behavior.
+- Guitar TAB or Violin musical authority;
+- nearest-note/pitch/proximity fallback policy.
