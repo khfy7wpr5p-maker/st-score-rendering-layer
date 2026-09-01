@@ -262,6 +262,52 @@ test("highlight targets the exact locator and clear removes only renderer-owned 
   assert.equal(harness.elements.p1v1n1.classList.contains("consumer-owned"), true);
 });
 
+test("multiple highlights are reversible and rerender clears stale presentation state", async () => {
+  const harness = createInteractionHarness();
+  await renderHarness(harness);
+  const firstTarget = { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 };
+  const secondTarget = { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 2 };
+  const oldFirst = harness.elements.p1v1n0;
+  const oldSecond = harness.elements.p1v2n0;
+
+  await harness.renderer.highlight({ target: firstTarget, className: "focus-a" });
+  await harness.renderer.highlight({ target: secondTarget, className: "focus-b" });
+  assert.equal(oldFirst.classList.contains("focus-a"), true);
+  assert.equal(oldSecond.classList.contains("focus-b"), true);
+
+  const freshChordGroup = createElement("fresh-chord-group", harness.elements.chordGroup.parentElement);
+  const freshChord0 = createElement("fresh-chord-0", freshChordGroup);
+  const freshChord1 = createElement("fresh-chord-1", freshChordGroup);
+  const freshVoice2Group = createElement("fresh-voice2-group", harness.elements.voice2Group.parentElement);
+  const freshVoice2 = createElement("fresh-voice2", freshVoice2Group);
+  harness.engine.graphic.measureList[0][0].staffEntries[0].graphicalVoiceEntries[0].notes = [
+    graphicalNote(freshChord0, { group: freshChordGroup }),
+    graphicalNote(freshChord1, { group: freshChordGroup }),
+  ];
+  harness.engine.graphic.measureList[0][0].staffEntries[1].graphicalVoiceEntries[0].notes = [
+    graphicalNote(freshVoice2, { group: freshVoice2Group }),
+  ];
+
+  await harness.renderer.render({ autoResize: false });
+  assert.equal(oldFirst.classList.contains("focus-a"), false, "rerender clears old first highlight");
+  assert.equal(oldSecond.classList.contains("focus-b"), false, "rerender clears old second highlight");
+
+  harness.hit(oldFirst);
+  assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), null, "old DOM ownership is stale");
+  harness.hit(freshChord0);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), firstTarget);
+  harness.hit(freshVoice2);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), secondTarget);
+
+  await harness.renderer.highlight({ target: firstTarget, className: "focus-a" });
+  await harness.renderer.highlight({ target: secondTarget, className: "focus-b" });
+  assert.equal(freshChord0.classList.contains("focus-a"), true);
+  assert.equal(freshVoice2.classList.contains("focus-b"), true);
+  await harness.renderer.clearHighlights();
+  assert.equal(freshChord0.classList.contains("focus-a"), false);
+  assert.equal(freshVoice2.classList.contains("focus-b"), false);
+});
+
 test("rerender drops stale DOM hit-test ownership", async () => {
   const harness = createInteractionHarness();
   await renderHarness(harness);
