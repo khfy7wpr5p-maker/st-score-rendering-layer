@@ -1,80 +1,190 @@
-# Browser Host Boundary — R8-B1
+# Browser Host Boundary
 
-Status: consumer-facing browser-host foundation. This stage does not claim that ST Music Workstation already contains or displays a browser score view.
+`@st/score-renderer-browser-host` is the consumer-facing ST browser presentation/lifecycle boundary. Historical R8-B1 naming describes its origin; this document describes the current production surface.
+
+Implementation: `packages/browser-host/src/index.ts`.
 
 ## Purpose
 
-`@st/score-renderer-browser-host` is the ST-owned browser presentation boundary used to turn bounded in-memory MusicXML into a rendered score without exposing OpenSheetMusicDisplay to consumer applications.
+```mermaid
+flowchart LR
+  Consumer[Consumer / UI shell]
+  Host[BrowserScoreHost]
+  Adapter[OsmdRenderer]
+  OSMD[OpenSheetMusicDisplay]
+  DOM[Owned SVG DOM]
 
-```text
-Consumer application / UI shell
-        |
-        | ST-owned request + runtime contract version
-        v
-@st/score-renderer-browser-host
-        |
-        v
-@st/score-renderer-osmd
-        |
-        v
-OpenSheetMusicDisplay
-        |
-        v
-owned presentation container / SVG
+  Consumer --> Host --> Adapter --> OSMD --> DOM
 ```
 
-The package remains `private: true`. R8-B1 does not publish renderer packages or define the final native/WebView delivery mechanism for Workstation.
+The host accepts bounded in-memory MusicXML and delegates presentation through an ST renderer. It never exposes OSMD model objects to the consumer.
+
+## Authority boundary
+
+The host owns:
+
+- its presentation container;
+- one current renderer instance;
+- replacement-render lifecycle;
+- runtime contract compatibility checks;
+- delegation for SVG export, measure cursor, note hit-test and highlight.
+
+The host does not own:
+
+- file/network loading;
+- canonical score state;
+- selected-note state;
+- playback/audio/MIDI/transport;
+- application navigation/toolbars;
+- authentication/business state;
+- OMR/correction/editing;
+- pointer/touch event registration.
 
 ## Compatibility handshake
 
-The browser host validates the exported ST runtime contract, currently `0.2.0`, before it creates a renderer. This value is intentionally distinct from private workspace package SemVer such as `0.1.0`.
+Construction requires `expectedContractVersion`. It must equal `SCORE_RENDERER_CONTRACT_VERSION`, currently `0.2.0`, before a renderer is created.
 
-A mismatch fails closed with `ScoreRendererContractVersionMismatchError`. After a render, the returned renderer contract is checked again so an incompatible adapter result cannot be accepted silently.
+After rendering, `ScoreRenderResult.contractVersion` is checked again. A mismatch fails closed with `ScoreRendererContractVersionMismatchError`.
 
-## Input and authority boundary
+Runtime protocol compatibility is deliberately separate from private package SemVer.
 
-The host accepts only in-memory MusicXML passed as text. Validation is delegated to `@st/score-renderer-core`, preserving the shared rules:
+## Input contract
 
-- empty input rejected;
-- NUL bytes rejected;
-- default maximum MusicXML size 5 MiB;
-- no URL/network loader contract.
+`renderMusicXml(content, options?, sourceId?)` constructs:
 
-The host grants no filesystem, shell, network, plugin, AI, MIDI-device, audio-device, Project mutation, Transport, Mixer, DSP, or realtime authority. It registers no automatic global message listener and exposes no `postMessage` transport.
+```ts
+{
+  kind: "musicxml",
+  content,
+  sourceId?
+}
+```
 
-Consumer code must never import `opensheetmusicdisplay`. Vendor ownership terminates inside `@st/score-renderer-osmd`.
+Validation is delegated to `validateScoreSource()`:
 
-## Fail-closed replacement policy
+- only `kind: "musicxml"`;
+- non-empty text;
+- no NUL bytes;
+- default maximum 5 MiB.
 
-A browser score is presentation state, not authoritative musical state. To avoid displaying stale notation after a failed replacement request, the host:
+No URL loader, PDF/image reader, MXL decoder, ScoreGraph parser or JSON source path exists in the browser host.
 
-1. validates the new in-memory source;
-2. disposes the previous renderer before accepting replacement output;
-3. clears the owned presentation container;
-4. creates a fresh renderer only for valid work;
-5. clears the renderer/container again if load, render, capability, or contract validation fails.
+## Replacement lifecycle
 
-A failed replacement therefore leaves an empty presentation surface rather than a misleading old score.
+A render request is a replacement of renderer-owned presentation state.
 
-Only one replacement render may be in flight at a time. A concurrent `renderMusicXml()` request is rejected without disposing the active renderer or mutating its presentation state. SVG export is also rejected while rendering is in progress. If the host is disposed during an in-flight load/render, availability is rechecked before later render phases so the stale operation cannot be accepted as a successful completion.
+```text
+renderMusicXml
+→ reject if disposed or another replacement is in flight
+→ validate new source
+→ dispose old renderer + clear owned container
+→ create fresh renderer
+→ require musicxml-render + svg-export
+→ renderer.load
+→ renderer.render
+→ verify returned contract version
+→ expose successful result
+```
 
-## Browser evidence
+If source validation, renderer construction/capability checking, load, render or result-contract checking fails, the current renderer is reset and the container is cleared. The host deliberately avoids leaving stale notation visible after a failed replacement.
 
-`tests/browser/osmd-browser-host-fixture.html` exercises the real chain in Chrome/Chromium:
+A concurrent replacement is rejected **without** disposing or mutating the render already in flight.
 
-- consumer-facing code constructs `BrowserScoreHost` rather than OSMD;
-- mismatched runtime contract is rejected before rendering;
-- valid MusicXML renders through browser host → ST OSMD adapter → real OSMD;
-- exported/runtime contract is `0.2.0`;
-- invalid replacement input removes the previously rendered SVG;
-- a later valid request can recover and render again.
+If `dispose()` occurs while a render is in flight, availability checks prevent the stale operation from being accepted as a successful completion.
 
-Unit/contract coverage additionally verifies concurrent replacement rejection, disposal during an in-flight render, capability failure, runtime-result contract mismatch, and the absence of direct vendor/network/message-transport authority in the browser-host package.
+## Presentation API
 
-The fixture's OSMD global/module shim is renderer-internal test plumbing only. It is not part of the consumer API.
+Current class methods:
 
-## Workstation integration gate
+```ts
+renderMusicXml(content, options?, sourceId?)
+exportSvg()
+moveCursor(target)
+hitTestNote({ clientX, clientY })
+highlight({ target, className? })
+clearHighlights()
+dispose()
+```
 
-ST Music Workstation already has an ST-owned non-realtime `ScoreRenderingPort` application boundary. Its runtime contract alignment to `0.2.0` is tracked separately in Workstation PR #164.
+### `hitTestNote`
 
-End-to-end Workstation display remains gated on selecting and reviewing the actual native/browser UI shell and delivery mechanism. That later binding must not move Node, browser, renderer, or OSMD work into the realtime audio callback, DSP graph, or AI/provider paths.
+The host validates finite browser client coordinates and delegates to a renderer that structurally implements `resolveNoteAtClientPoint()`.
+
+Hit-testing is not a required method on the base `ScoreRenderer` interface in contract `0.2.0`.
+
+The host does not convert coordinates, search nearest notes or resolve canonical musical identity.
+
+### Highlight
+
+`highlight()` requires the renderer's `note-highlight` capability and delegates the `ScoreNoteRef`. Highlight state is presentation-only and does not mean that the host owns a selected-note model.
+
+### Cursor
+
+`moveCursor()` requires the `cursor` capability. The current OSMD implementation moves to a validated measure index and checks the requested `partId` exists.
+
+## Exported runtime forms
+
+There are two build-time runtime outputs on top of the same browser-host boundary.
+
+### Workstation runtime
+
+Built by `scripts/export-workstation-runtime-with-cursor.mjs`.
+
+It contains local ST modules, the exact OSMD browser bundle, integrity/provenance manifest data, the Workstation bridge, cursor and note-interaction operations.
+
+### Generic browser runtime
+
+Built by `scripts/export-browser-runtime.mjs`.
+
+It is derived from the same runtime graph but removes the Workstation/JUCE-native shell and exposes the consumer-neutral browser runtime. Its manifest sets:
+
+```json
+{ "runtimeTarget": "browser" }
+```
+
+Both runtime pages use a CSP with `connect-src 'none'` and local renderer/vendor assets.
+
+## Global runtime host
+
+The exported interactive runtimes expose the ST-owned presentation host as:
+
+```js
+globalThis.__ST_SCORE_RENDER_HOST__
+```
+
+The interaction-capable runtime surface includes:
+
+```js
+renderMusicXml(payload)
+exportSvg()
+moveCursor(payload)
+hitTestNote(payload)
+highlight(payload)
+clearHighlights()
+dispose()
+```
+
+Runtime bootstrap validation rejects malformed/non-plain payloads, unknown interaction fields, unsafe part IDs, non-finite points, unsafe integer locators and unsafe highlight class tokens.
+
+No OSMD object traversal is exposed through this global.
+
+## Resize and mobile behavior
+
+`ScoreRenderOptions.autoResize` is passed to the adapter/OSMD. The browser host itself contains no `ResizeObserver`, pointer/touch listener, orientation listener or mobile-specific coordinate conversion.
+
+Hosts must bind user events and pass `clientX/clientY` to `hitTestNote()`.
+
+See [MOBILE-SAFARI.md](MOBILE-SAFARI.md) and [NOTE-INTERACTION.md](NOTE-INTERACTION.md).
+
+## Test protection
+
+Key tests:
+
+- `tests/browser-host.test.mjs`: lifecycle, replacement clearing, concurrency, disposal, contract/capability gates and authority boundary;
+- `tests/browser-host-interaction.test.mjs`: hit-test/highlight surface and fail-closed interaction states;
+- `tests/browser-host-cursor.test.mjs`: cursor delegation;
+- `tests/browser/osmd-browser-host-fixture.html`: real browser host → adapter → OSMD rendering;
+- `tests/browser-runtime-export.test.mjs`: consumer-neutral exported runtime surface and manifest;
+- `tests/workstation-runtime-*.test.mjs`: Workstation runtime export/cursor contract.
+
+The CI browser fixtures use Chrome/Chromium. Browser-host behavior is not automatically exercised in Safari/WebKit by this repository.
