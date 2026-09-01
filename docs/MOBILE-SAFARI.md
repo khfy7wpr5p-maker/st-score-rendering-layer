@@ -86,26 +86,34 @@ If a host needs deterministic fixed geometry for a particular surface, it can re
 
 ## Evidence levels
 
-### Automated repository evidence
+### Automated Chromium evidence
 
 `tests/browser/osmd-note-interaction-fixture.html` proves real OSMD interaction at widths `720px` and `320px`.
 
-`tests/browser/run-osmd-browser-fixture.mjs` executes browser fixtures with Chrome/Chromium.
+`tests/browser/run-osmd-browser-fixture.mjs` executes the full browser fixture suite with Chrome/Chromium.
+
+### Automated WebKit-engine evidence
+
+SRL-EB-07 adds `tests/webkit/run-osmd-webkit-fixture.mjs` and `npm run test:webkit`.
+
+The gate uses the exact pinned Playwright dependency and installs only its WebKit browser engine in CI. It serves repository assets from loopback HTTP and runs bounded baseline rendering plus the note-interaction fixture, including the fixture's `720px` and `320px`, rerender, scroll-before-tap, exact notehead, unique graphical-owner and ambiguity-abstention assertions.
+
+This is **WebKit engine evidence**. It is not a claim that Linux Playwright WebKit is identical to the shipping Safari application on a physical iPhone.
 
 ### Real-device acceptance evidence
 
 PR #16 records that real iPhone/Safari acceptance identified exact-notehead-only touch ownership as too narrow and drove the unique graphical-group widening.
 
-### Not automated here
+### Still not automated as physical Safari behavior
 
-The repository has no WebKit/Safari CI gate. The following are therefore **UNVERIFIED by repository automation**:
+The following remain **UNVERIFIED as real-device Safari guarantees**:
 
-- orientation transition behavior;
-- iOS browser-chrome/visual-viewport resize behavior;
-- safe-area inset interactions;
-- pinch-zoom edge cases;
-- host passive-listener policy;
-- nested-scroller behavior specific to a consumer shell.
+- orientation transitions involving actual iOS browser chrome;
+- iOS visual-viewport resizing and safe-area inset interactions;
+- real touch event delivery and passive-listener behavior in a consumer shell;
+- pinch-zoom edge cases on physical Safari;
+- consumer-specific nested scrollers, overlays and toolbar/modal lifecycle;
+- hardware/device-specific rendering differences.
 
 ## Integration checklist for iPhone/Safari consumers
 
@@ -121,4 +129,4 @@ A consumer should verify on the actual host surface that:
 
 ## Architecture status
 
-Mobile note hit-testing is production-implemented through browser-generic DOM ownership. Safari-specific lifecycle/gesture behavior remains a host integration concern with real-device acceptance evidence but without a repository-owned automated WebKit gate.
+Mobile note hit-testing is production-implemented through browser-generic DOM ownership. Repository automation now covers both Chromium and a pinned Playwright WebKit engine for bounded renderer rendering/interaction evidence. Safari-specific host lifecycle, browser chrome, gesture and safe-area behavior remains a physical-device/consumer integration acceptance concern.

@@ -15,7 +15,8 @@ The repository currently provides:
 - browser-host APIs for render, SVG export, measure cursor, exact note hit-test and highlight;
 - a reversible accessibility overlay;
 - renderer-owned Workstation and generic browser runtime exports with manifest/integrity metadata;
-- validated standard-notation + guitar-TAB rendering, including string/fret display evidence.
+- validated standard-notation + guitar-TAB rendering, including string/fret display evidence;
+- automated Chromium and WebKit engine regression evidence for the bounded renderer interaction path.
 
 ## What this repository does not do
 
@@ -67,10 +68,14 @@ Requires Node.js `>=20.19.0`.
 npm install --ignore-scripts --no-audit --no-fund
 npm run check
 npm run test:browser
+npx playwright install --with-deps webkit
+npm run test:webkit
 npm run test:headless
 ```
 
-`npm run check` performs TypeScript typecheck, build and unit tests. Browser gates run real Chrome/Chromium fixtures. The headless gate performs real headless rendering and visual-regression checks. There is currently **no automated Safari/WebKit test job** in this repository.
+`npm run check` performs TypeScript typecheck, build and unit tests. Browser gates run real Chrome/Chromium fixtures. `npm run test:webkit` runs a pinned Playwright WebKit engine against bounded baseline and note-interaction fixtures. The headless gate performs real headless rendering and visual-regression checks.
+
+The WebKit gate is **engine evidence, not physical iPhone/Safari acceptance**. Safari browser chrome, safe areas, real touch delivery, pinch zoom and consumer-shell lifecycle still require target-device acceptance.
 
 The protected `main` branch requires a pull request and the `foundation` status check.
 

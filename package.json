@@ -12,11 +12,13 @@
     "export:workstation-runtime": "npm run build && node scripts/export-workstation-runtime-with-cursor.mjs",
     "export:browser-runtime": "npm run build && node scripts/export-browser-runtime.mjs",
     "test:browser": "npm run export:workstation-runtime && node tests/browser/run-osmd-browser-fixture.mjs",
+    "test:webkit": "npm run export:workstation-runtime && node tests/webkit/run-osmd-webkit-fixture.mjs",
     "test:headless": "node tests/headless/run-osmd-headless-gate.mjs",
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
+    "playwright": "1.62.1",
     "typescript": "6.0.3"
   }
 }
