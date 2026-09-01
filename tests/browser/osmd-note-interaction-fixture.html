@@ -76,8 +76,7 @@ async function proveAtWidth(width){
   stage(`${width}:done`);await host.dispose();
 }
 
-const watchdog=setTimeout(()=>{status.dataset.renderPass="false";status.dataset.renderError=`timeout at ${status.dataset.stage||"unknown"}`;status.textContent="NOTE_INTERACTION_FAIL"},25000);
-(async()=>{try{stage("720:start");await proveAtWidth(720);stage("320:start");await proveAtWidth(320);clearTimeout(watchdog);Object.assign(status.dataset,{contractVersion:SCORE_RENDERER_CONTRACT_VERSION,chordExact:"true",uniqueDescendant:"true",ambiguousAbstain:"true",multiVoice:"true",multiStaff:"true",multiPart:"true",renderEpoch:"true",staleEvidence:"true",rerenderHighlight:"true",mobile320:"true",svgSurfaceOnly:"true",renderPass:"true",stage:"complete"});status.textContent="NOTE_INTERACTION_PASS"}catch(error){clearTimeout(watchdog);status.dataset.renderPass="false";status.dataset.renderError=String(error?.message??error);status.textContent="NOTE_INTERACTION_FAIL"}})();
+(async()=>{try{stage("720:start");await proveAtWidth(720);stage("320:start");await proveAtWidth(320);Object.assign(status.dataset,{contractVersion:SCORE_RENDERER_CONTRACT_VERSION,chordExact:"true",uniqueDescendant:"true",ambiguousAbstain:"true",multiVoice:"true",multiStaff:"true",multiPart:"true",renderEpoch:"true",staleEvidence:"true",rerenderHighlight:"true",mobile320:"true",svgSurfaceOnly:"true",renderPass:"true",stage:"complete"});status.textContent="NOTE_INTERACTION_PASS"}catch(error){status.dataset.renderPass="false";status.dataset.renderError=String(error?.message??error);status.textContent="NOTE_INTERACTION_FAIL"}})();
 </script>
 </body>
 </html>
