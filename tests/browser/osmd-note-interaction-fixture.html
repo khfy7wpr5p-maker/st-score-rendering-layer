@@ -73,7 +73,7 @@ async function proveAtWidth(width){
 
   const rerendered=adapter.resolveRenderedNoteElement(chord1);stage(`${width}:rerender-hit`);const fresh=pointForExactTarget(host,rerendered,chord1);if(fresh.evidence.renderEpoch!==secondRender.renderEpoch)throw new Error("replacement tap did not use new render epoch");if(fresh.evidence.sourceId!==`note-interaction-rerender-${width}`)throw new Error("replacement sourceId drift");
   stage(`${width}:rerender-highlight`);await host.highlight({target:fresh.evidence.target,className:"teacher-focus"});if(rerendered.getAttribute("data-st-score-highlight")!=="true"||!rerendered.classList.contains("teacher-focus"))throw new Error("fresh rebind highlight failed after rerender");await host.clearHighlights();
-  stage(`${width}:done`);await host.dispose();
+  stage(`${width}:done`);
 }
 
 const watchdog=setTimeout(()=>{status.dataset.renderPass="false";status.dataset.renderError=`timeout at ${status.dataset.stage||"unknown"}`;status.textContent="NOTE_INTERACTION_FAIL"},25000);
