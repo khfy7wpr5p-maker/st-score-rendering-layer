@@ -140,6 +140,8 @@ await host.highlight({ target: scoreNoteRef, className? })
 await host.clearHighlights()
 ```
 
+The browser host also exposes bounded detailed hit evidence tied to the active render epoch. That evidence is diagnostic/presentation freshness data; it does not become canonical musical identity.
+
 Interaction is rejected when:
 
 - the host is disposed;
@@ -167,17 +169,11 @@ consumer deselects
 → clearHighlights()
 ```
 
-A rerender clears highlight/index state. If traversal is unchanged, the same logical rendered note may produce the same `ScoreNoteRef`, but the DOM target is not treated as stable identity.
+A rerender clears highlight/index state and advances presentation-generation evidence. If traversal is unchanged, the same logical rendered note may produce the same `ScoreNoteRef`, but the DOM target is not treated as stable identity and old detailed hit evidence must not be reused as current evidence.
 
 ## Runtime bridge
 
-Interactive exported runtimes expose:
-
-```js
-globalThis.__ST_SCORE_RENDER_HOST__.hitTestNote({ clientX, clientY })
-globalThis.__ST_SCORE_RENDER_HOST__.highlight({ target, className? })
-globalThis.__ST_SCORE_RENDER_HOST__.clearHighlights()
-```
+Interactive exported runtimes expose bounded presentation operations for hit-testing, detailed hit evidence, highlight and clear-highlight behavior through `globalThis.__ST_SCORE_RENDER_HOST__`.
 
 Runtime payloads fail closed on malformed/non-plain objects, unknown fields, non-finite coordinates, unsafe part IDs, unsafe integer locators and unsafe highlight class tokens.
 
@@ -187,7 +183,9 @@ The runtime exposes no consumer DOM traversal primitive and no OSMD model object
 
 PR #16 was motivated by real iPhone/Safari acceptance showing that exact-notehead-only ownership was too small for reliable touch selection. The implemented widening remains deterministic DOM ownership, not heuristic geometry.
 
-Repository CI proves the interaction fixture at 720px and 320px in Chrome/Chromium. It does **not** contain an automated Safari/WebKit job. Safari-specific orientation, safe-area, browser chrome resize, passive-listener and pinch-zoom behavior must therefore not be claimed as repository-CI-proven.
+Repository CI exercises the note-interaction fixture at `720px` and `320px` in Chromium and, from SRL-EB-07, in a pinned Playwright WebKit engine. The WebKit gate covers bounded rendering, exact/unique ownership, ambiguity abstention, rerender freshness and scroll-before-tap behavior.
+
+Playwright WebKit is **not** physical iPhone/Safari acceptance. Safari-specific browser chrome, safe-area behavior, real touch/gesture delivery, passive-listener policy, pinch zoom and consumer-shell lifecycle must not be claimed as repository-CI-proven.
 
 See [MOBILE-SAFARI.md](MOBILE-SAFARI.md).
 
@@ -207,13 +205,14 @@ SesliTab must independently prove how `partId`, `measureIndex`, `noteIndex` and 
 
 ## Contract version decision
 
-`SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` because note hit-testing is not a mandatory method on the base `ScoreRenderer` interface and the mobile ownership widening does not add new consumer authority.
+`SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` because note hit-testing is not a mandatory method on the base `ScoreRenderer` interface and the mobile ownership widening, render freshness evidence and WebKit regression gate do not add new consumer authority.
 
 A future change that makes hit-test a required cross-renderer method/capability requires a separate contract-version review.
 
 ## Tests
 
 - `tests/note-interaction.test.mjs`: deterministic identity, unique-group touch ownership, ambiguity abstention, rerender identity, stale DOM reset, rests, no-nearest-note, highlight cleanup;
-- `tests/browser-host-interaction.test.mjs`: host delegation/fail-closed state;
-- `tests/browser/osmd-note-interaction-fixture.html`: real OSMD/Chrome interaction at 720px and 320px;
-- `tests/browser/osmd-chord-notehead-research-fixture.html`: chord notehead identity evidence.
+- `tests/browser-host-interaction.test.mjs`: host delegation/fail-closed state and current/stale render evidence;
+- `tests/browser/osmd-note-interaction-fixture.html`: real OSMD interaction at 720px and 320px;
+- `tests/browser/osmd-chord-notehead-research-fixture.html`: chord notehead identity evidence;
+- `tests/webkit/run-osmd-webkit-fixture.mjs`: pinned Playwright WebKit engine evidence for baseline rendering and the bounded interaction fixture.
