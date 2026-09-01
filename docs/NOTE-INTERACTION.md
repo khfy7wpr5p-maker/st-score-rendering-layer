@@ -2,19 +2,29 @@
 
 ## Authority
 
-This extension is presentation-only. The renderer owns rendered-note hit-testing, highlighting, cursor movement and presentation state. It does **not** own pitch, duration, octave, voice, tie, tuplet, OMR correction, canonical score truth or teacher approval.
+This layer is presentation-only. The renderer owns rendered-note hit-testing and reversible highlighting; the consumer owns canonical musical identity and selected-note application state.
 
-A successful hit-test returns only a `ScoreNoteRef`. Consumers must resolve that locator against their own separately verified canonical model before performing any edit or correction.
+The renderer does **not** own pitch, duration, octave, voice correctness, tie/tuplet correction, OMR truth, teacher approval or edit authority.
 
-The following assumption is explicitly invalid:
+A successful hit-test returns only a `ScoreNoteRef`. Consumers must resolve that locator against their own canonical model before an edit/correction action.
+
+Invalid assumption:
 
 ```text
 renderer ScoreNoteRef.noteIndex == consumer global/canonical NoteObject array index
 ```
 
-## ScoreNoteRef identity policy
+## Event ownership
 
-`ScoreNoteRef` remains:
+The renderer does not register `pointerdown`, `touchstart`, `click` or gesture listeners. A host/application obtains an event and calls:
+
+```ts
+host.hitTestNote({ clientX: event.clientX, clientY: event.clientY })
+```
+
+Gesture policy, touch-action policy, selection/deselection and application callbacks remain consumer responsibilities.
+
+## ScoreNoteRef identity policy
 
 ```ts
 {
@@ -25,74 +35,108 @@ renderer ScoreNoteRef.noteIndex == consumer global/canonical NoteObject array in
 }
 ```
 
-The existing `0.2.0` traversal policy remains authoritative:
+Traversal policy:
 
 ```text
-selected part
+selected part / Instrument.IdString
 → instrument staves sorted by idInMusicSheet
 → staff entry order
 → graphical voice entry order
 → graphical note order
 ```
 
-When a valid non-negative OSMD/MusicXML voice id is available, hit-test returns `voice` and `noteIndex` is counted after filtering the selected part + measure to that voice. If a usable voice id is unavailable, the renderer does not invent one; `voice` is omitted and `noteIndex` is the unfiltered traversal index for that part + measure.
+When a valid non-negative OSMD/MusicXML voice id is available, hit-test returns `voice` and `noteIndex` is counted within that voice for the selected part+measure. If a usable voice id is unavailable, the renderer does not invent one; `voice` is omitted and `noteIndex` is the unfiltered traversal index for that part+measure.
 
-Pitch, duration or visual proximity are never used to establish identity.
+Pitch, duration and visual proximity are never used to establish identity.
+
+## Visual geometry vs interaction geometry
+
+These are deliberately different concepts.
+
+**Visual geometry** is the SVG geometry produced by OSMD.
+
+**Interaction geometry** is deterministic DOM ownership registered by the ST adapter:
+
+- the exact notehead element is the strongest target;
+- a graphical-note group obtained from the same exact OSMD `GraphicalNote` may additionally be an interaction owner when exactly one `ScoreNoteRef` owns it;
+- shared groups are ambiguous and fail closed.
+
+There is no synthetic bounding-box expansion, hit radius, nearest-note search or score-space distance calculation.
 
 ## Browser adapter hit-test
 
-`OsmdRenderer.resolveNoteAtClientPoint({ clientX, clientY })` is an adapter interaction extension. It is intentionally not added to the base `ScoreRenderer` interface in this stage.
+`OsmdRenderer.resolveNoteAtClientPoint({ clientX, clientY })` is an OSMD-adapter extension. It is intentionally not required by the base `ScoreRenderer` interface in contract `0.2.0`.
 
-After each successful render, the OSMD adapter builds a bounded renderer-owned DOM-to-`ScoreNoteRef` index. The index:
+After each successful render, the adapter builds a bounded DOM-to-`ScoreNoteRef` index. The index:
 
-- is constructed from the same graphical traversal used by `ScoreNoteRef` resolution;
-- stores only rendered DOM ownership and stable locator values;
-- uses a `WeakMap`, so it does not retain stale DOM after render replacement;
+- uses the same graphical traversal as `ScoreNoteRef` resolution;
+- stores only DOM ownership and stable locator values;
+- uses a `WeakMap`;
 - is rebuilt after render and part-visibility graphic rebuilds;
 - is reset on load, rerender failure and dispose;
 - is bounded to 200,000 graphical notes per render;
 - never searches for a nearest note.
 
-If two different `ScoreNoteRef` values claim the same graphical DOM element, that element is marked ambiguous and hit-test returns `null` rather than selecting the first note.
+If two different `ScoreNoteRef` values claim the same DOM element, that element is marked ambiguous.
 
-### Glyph and exact touch-ownership policy
+## Client-coordinate policy
 
-The pinned OSMD `2.1.2` adapter uses the public graphical-note primitives `getNoteheadSVGs()`, `vfnoteIndex` and `getSVGGElement()`.
+The adapter accepts browser viewport coordinates and calls:
 
-The notehead remains the strongest exact identity target. Chord members may share `getSVGGElement()` while `getNoteheadSVGs()[vfnoteIndex]` resolves distinct notehead elements, so an exact notehead descendant always wins over a broader ambiguous ancestor.
+```ts
+document.elementFromPoint(clientX, clientY)
+```
 
-For mobile usability, the adapter may additionally register a graphical note group as an interaction owner **only through deterministic DOM ownership**:
+It then walks DOM ancestry only until the renderer container.
 
-- the group is obtained directly from the same exact `GraphicalNote` via `getSVGGElement()`;
-- if exactly one `ScoreNoteRef` owns that group, a hit on its stem/flag/dot/other descendant may resolve to that same exact locator;
-- if multiple different `ScoreNoteRef` values claim the group, the group is marked ambiguous and group-only hits return `null`;
-- a distinct exact notehead inside an ambiguous shared group remains selectable because the more-specific exact notehead already proves identity;
-- no bounding-box expansion, coordinate radius, nearest-note search, pitch matching or consumer-side SVG scraping is introduced.
+There is no custom:
 
-For a single pitched graphical note, if `vfnoteIndex` is unavailable but `getNoteheadSVGs()` exposes exactly one element, index `0` is accepted as an unambiguous exact-notehead fallback. For multi-note/chord cases a valid `vfnoteIndex` is required; otherwise interaction fails closed. Graphical rests are excluded using the public source-note `isRest()` signal and are never added to the note interaction index.
+- viewport→score coordinate conversion;
+- scroll-offset calculation;
+- device-pixel-ratio conversion;
+- browser/pinch zoom transform;
+- bounding-box spatial index.
 
-Hit-test walks only the actual `document.elementFromPoint()` DOM ancestry until the renderer container.
+The browser's DOM hit-testing resolves the currently rendered/transformed element.
 
-- an exact mapped notehead element or its descendant may resolve to that note;
-- a uniquely-owned graphical note group or its descendant may resolve to that same note;
-- shared/ambiguous graphical groups return `null` unless a more-specific exact notehead descendant already proved identity;
-- rests, beams outside a uniquely-owned note group, staff lines, slurs, text, measure whitespace and other unmapped SVG/HTML nodes return `null`;
-- elements outside the renderer container return `null`;
-- no nearest-note fallback exists;
-- no pitch matching exists.
+## Exact notehead and graphical-group ownership
 
-Duplicate exact-notehead ownership remains ambiguous and returns `null` rather than selecting an arbitrary note.
+The pinned OSMD `2.1.2` adapter uses `getNoteheadSVGs()`, `vfnoteIndex` and `getSVGGElement()`.
+
+The notehead remains the strongest exact identity target. Chord members may share a graphical group while having distinct noteheads, so an exact notehead descendant can resolve successfully even when a broader ancestor is ambiguous.
+
+A uniquely owned graphical note group may widen touch ownership to stem/flag/dot/other descendants of that same group. If multiple notes claim the group, a group-only hit returns `null`.
+
+For a single pitched graphical note, if `vfnoteIndex` is unavailable but `getNoteheadSVGs()` exposes exactly one element, index `0` is accepted as an unambiguous fallback. Multi-note cases require a valid exact notehead index or fail closed.
+
+Graphical rests are excluded from note interaction.
+
+## Hit results
+
+May resolve:
+
+- exact mapped notehead element or descendant;
+- uniquely-owned graphical-note group or descendant.
+
+Returns `null` for:
+
+- ambiguous shared groups without a more-specific exact notehead hit;
+- duplicate exact-notehead ownership;
+- rests;
+- staff/measure whitespace;
+- unmapped SVG/HTML nodes;
+- elements outside the renderer container;
+- no DOM element at the client point.
+
+There is no nearest-note or pitch-matching fallback.
 
 ## BrowserScoreHost API
 
-The browser host adds three presentation APIs:
-
 ```ts
 host.hitTestNote({ clientX, clientY })
-// → ScoreNoteRef | null
+// ScoreNoteRef | null
 
 await host.highlight({ target: scoreNoteRef, className? })
-
 await host.clearHighlights()
 ```
 
@@ -100,15 +144,34 @@ Interaction is rejected when:
 
 - the host is disposed;
 - no score has been rendered;
-- replacement render is in flight;
-- note hit-test is unavailable on the selected renderer;
+- a replacement render is in flight;
+- hit-test is unavailable on the selected renderer;
 - note-highlight capability is unavailable.
 
-`highlight()` continues to target the exact existing `ScoreNoteRef` traversal and does not change source MusicXML colors. `clearHighlights()` removes only renderer-owned highlight class/marker state tracked by the adapter.
+`highlight()` targets the exact `ScoreNoteRef` traversal, adds renderer-owned DOM class/marker state and does not change source MusicXML colors. `clearHighlights()` removes only state tracked by the renderer.
+
+## Selection and deselection
+
+`BrowserScoreHost` and `OsmdRenderer` do not store a `selectedNote` field.
+
+A normal consumer flow is:
+
+```text
+hitTestNote
+→ consumer resolves ScoreNoteRef
+→ consumer stores selected canonical note
+→ highlight(ScoreNoteRef)
+
+consumer deselects
+→ consumer clears selected canonical note
+→ clearHighlights()
+```
+
+A rerender clears highlight/index state. If traversal is unchanged, the same logical rendered note may produce the same `ScoreNoteRef`, but the DOM target is not treated as stable identity.
 
 ## Runtime bridge
 
-The exported Workstation and browser runtimes expose the same operations on the existing ST-owned global host:
+Interactive exported runtimes expose:
 
 ```js
 globalThis.__ST_SCORE_RENDER_HOST__.hitTestNote({ clientX, clientY })
@@ -116,27 +179,41 @@ globalThis.__ST_SCORE_RENDER_HOST__.highlight({ target, className? })
 globalThis.__ST_SCORE_RENDER_HOST__.clearHighlights()
 ```
 
-Runtime payloads fail closed on malformed or non-plain objects, unknown fields, non-finite coordinates, empty/oversized or whitespace-mutated `partId`, unsafe measure/note/voice integers and unsafe highlight class tokens. The bridge exposes no consumer DOM traversal primitive and no OSMD object.
+Runtime payloads fail closed on malformed/non-plain objects, unknown fields, non-finite coordinates, unsafe part IDs, unsafe integer locators and unsafe highlight class tokens.
 
-## Contract version decision
+The runtime exposes no consumer DOM traversal primitive and no OSMD model object.
 
-`SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` for this stage.
+## Mobile / Safari evidence boundary
 
-Reason: the base `ScoreRenderer` interface, `ScoreNoteRef`, existing capability union and existing consumer obligations are unchanged. The mobile ownership widening remains inside the same browser-adapter hit-test method and does not add a new runtime method or consumer authority. Runtime consumers pin and verify an exact renderer revision in addition to the ST contract version.
+PR #16 was motivated by real iPhone/Safari acceptance showing that exact-notehead-only ownership was too small for reliable touch selection. The implemented widening remains deterministic DOM ownership, not heuristic geometry.
 
-A future attempt to add hit-test as a required base `ScoreRenderer` method or new mandatory cross-renderer capability must be reviewed as a separate contract-version decision.
+Repository CI proves the interaction fixture at 720px and 320px in Chrome/Chromium. It does **not** contain an automated Safari/WebKit job. Safari-specific orientation, safe-area, browser chrome resize, passive-listener and pinch-zoom behavior must therefore not be claimed as repository-CI-proven.
+
+See [MOBILE-SAFARI.md](MOBILE-SAFARI.md).
 
 ## SesliTab integration rule
 
-The safe consumer chain is:
-
 ```text
-rendered note
+host touch/pointer event
 → renderer hitTestNote()
-→ deterministic ScoreNoteRef
+→ deterministic ScoreNoteRef or null
 → SesliTab-owned canonical resolver
-→ exact canonical note or consumer-side abstain
+→ exact canonical event or consumer abstain
+→ SesliTab-owned selection state
 → renderer highlight(same ScoreNoteRef)
 ```
 
 SesliTab must independently prove how `partId`, `measureIndex`, `noteIndex` and optional `voice` map into its canonical note identity. This repository does not define or infer that mapping.
+
+## Contract version decision
+
+`SCORE_RENDERER_CONTRACT_VERSION` remains `0.2.0` because note hit-testing is not a mandatory method on the base `ScoreRenderer` interface and the mobile ownership widening does not add new consumer authority.
+
+A future change that makes hit-test a required cross-renderer method/capability requires a separate contract-version review.
+
+## Tests
+
+- `tests/note-interaction.test.mjs`: deterministic identity, unique-group touch ownership, ambiguity abstention, rerender identity, stale DOM reset, rests, no-nearest-note, highlight cleanup;
+- `tests/browser-host-interaction.test.mjs`: host delegation/fail-closed state;
+- `tests/browser/osmd-note-interaction-fixture.html`: real OSMD/Chrome interaction at 720px and 320px;
+- `tests/browser/osmd-chord-notehead-research-fixture.html`: chord notehead identity evidence.
