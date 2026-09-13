@@ -54,6 +54,23 @@ export type OsmdNoteHitMissReason =
 export type OsmdNoteHitDetailedResult =
   | Readonly<{ kind: "HIT"; target: ScoreNoteRef }>
   | Readonly<{ kind: "MISS"; reason: OsmdNoteHitMissReason }>;
+export type OsmdRenderedEventTargetKind = "NOTE" | "REST";
+export type OsmdRenderedEventTargetRef = Readonly<{
+  kind: OsmdRenderedEventTargetKind;
+  partId: string;
+  measureIndex: number;
+  eventIndex: number;
+  voice?: number;
+}>;
+export type OsmdRenderedEventHitMissReason =
+  | "NO_ELEMENT_AT_POINT"
+  | "OUTSIDE_RENDER_CONTAINER"
+  | "UNMAPPED_ELEMENT"
+  | "AMBIGUOUS_OWNERSHIP"
+  | "UNSUPPORTED_TARGET";
+export type OsmdRenderedEventHitDetailedResult =
+  | Readonly<{ kind: "HIT"; target: OsmdRenderedEventTargetRef }>
+  | Readonly<{ kind: "MISS"; reason: OsmdRenderedEventHitMissReason }>;
 
 const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
   "musicxml-render",
@@ -77,10 +94,16 @@ type IndexedGraphicalNote = Readonly<{
   voiceIndex?: number;
 }>;
 type HitTestOwner = ScoreNoteRef | typeof AMBIGUOUS_HIT_OWNER | typeof NO_NOTE_HIT_OWNER;
+type RenderedEventHitOwner = OsmdRenderedEventTargetRef | typeof AMBIGUOUS_HIT_OWNER;
 type ElementOwnershipResult = Readonly<{
   insideContainer: boolean;
   target?: ScoreNoteRef;
   reason?: "AMBIGUOUS_OWNERSHIP" | "NO_NOTE_OWNER";
+}>;
+type RenderedEventElementOwnershipResult = Readonly<{
+  insideContainer: boolean;
+  target?: OsmdRenderedEventTargetRef;
+  reason?: "AMBIGUOUS_OWNERSHIP";
 }>;
 
 function resolveOpenSheetMusicDisplay(): typeof OsmdModule.OpenSheetMusicDisplay {
@@ -123,6 +146,14 @@ function sameScoreNoteRef(left: ScoreNoteRef, right: ScoreNoteRef): boolean {
     && left.voice === right.voice;
 }
 
+function sameRenderedEventTargetRef(left: OsmdRenderedEventTargetRef, right: OsmdRenderedEventTargetRef): boolean {
+  return left.kind === right.kind
+    && left.partId === right.partId
+    && left.measureIndex === right.measureIndex
+    && left.eventIndex === right.eventIndex
+    && left.voice === right.voice;
+}
+
 function miss(reason: OsmdNoteHitMissReason): OsmdNoteHitDetailedResult {
   return Object.freeze({ kind: "MISS", reason });
 }
@@ -131,8 +162,20 @@ function hit(target: ScoreNoteRef): OsmdNoteHitDetailedResult {
   return Object.freeze({ kind: "HIT", target });
 }
 
+function renderedEventMiss(reason: OsmdRenderedEventHitMissReason): OsmdRenderedEventHitDetailedResult {
+  return Object.freeze({ kind: "MISS", reason });
+}
+
+function renderedEventHit(target: OsmdRenderedEventTargetRef): OsmdRenderedEventHitDetailedResult {
+  return Object.freeze({ kind: "HIT", target });
+}
+
 function isScoreNoteRefOwner(owner: HitTestOwner): owner is ScoreNoteRef {
   return owner !== AMBIGUOUS_HIT_OWNER && owner !== NO_NOTE_HIT_OWNER;
+}
+
+function isRenderedEventRefOwner(owner: RenderedEventHitOwner): owner is OsmdRenderedEventTargetRef {
+  return owner !== AMBIGUOUS_HIT_OWNER;
 }
 
 export class OsmdRenderer implements ScoreRenderer {
@@ -143,6 +186,7 @@ export class OsmdRenderer implements ScoreRenderer {
   readonly #highlighted = new Map<Element, string>();
 
   #noteRefByElement: WeakMap<Element, HitTestOwner> = new WeakMap();
+  #renderedEventRefByElement: WeakMap<Element, RenderedEventHitOwner> = new WeakMap();
   #osmd: OsmdEngine | undefined;
   #loaded = false;
   #rendered = false;
@@ -246,6 +290,53 @@ export class OsmdRenderer implements ScoreRenderer {
     if (sawAmbiguous) return miss("AMBIGUOUS_OWNERSHIP");
     if (sawNoNoteOwner) return miss("NO_NOTE_OWNER");
     return miss("UNMAPPED_ELEMENT");
+  }
+
+  resolveRenderedEventAtClientPointDetailed(point: OsmdClientPoint): OsmdRenderedEventHitDetailedResult {
+    this.#requireRendered("resolveRenderedEventAtClientPointDetailed()");
+    requireFiniteCoordinate(point.clientX, "clientX");
+    requireFiniteCoordinate(point.clientY, "clientY");
+
+    const document = this.#container.ownerDocument;
+    const initial = document.elementFromPoint(point.clientX, point.clientY);
+    const stacked = typeof document.elementsFromPoint === "function"
+      ? document.elementsFromPoint(point.clientX, point.clientY)
+      : [];
+    const candidates: Element[] = [];
+    if (initial !== null) candidates.push(initial);
+    for (const element of stacked) {
+      if (!candidates.includes(element)) candidates.push(element);
+    }
+    if (candidates.length === 0) return renderedEventMiss("NO_ELEMENT_AT_POINT");
+
+    // Generic targeting gives the exact topmost rendered owner precedence. This is
+    // the key difference from the legacy note-only bridge: a rest is now a HIT,
+    // not a NO_NOTE_OWNER miss that can fall through to a lower note.
+    if (initial !== null) {
+      const topOwnership = this.#resolveRenderedEventOwnership(initial);
+      if (topOwnership.reason === "AMBIGUOUS_OWNERSHIP") return renderedEventMiss("AMBIGUOUS_OWNERSHIP");
+      if (topOwnership.target !== undefined) return renderedEventHit(topOwnership.target);
+    }
+
+    let resolved: OsmdRenderedEventTargetRef | undefined;
+    let sawInsideContainer = false;
+    let sawAmbiguous = false;
+
+    for (const candidate of candidates) {
+      const ownership = this.#resolveRenderedEventOwnership(candidate);
+      sawInsideContainer ||= ownership.insideContainer;
+      if (ownership.reason === "AMBIGUOUS_OWNERSHIP") sawAmbiguous = true;
+      if (ownership.target === undefined) continue;
+      if (resolved !== undefined && !sameRenderedEventTargetRef(resolved, ownership.target)) {
+        return renderedEventMiss("AMBIGUOUS_OWNERSHIP");
+      }
+      resolved = ownership.target;
+    }
+
+    if (resolved !== undefined) return renderedEventHit(resolved);
+    if (!sawInsideContainer) return renderedEventMiss("OUTSIDE_RENDER_CONTAINER");
+    if (sawAmbiguous) return renderedEventMiss("AMBIGUOUS_OWNERSHIP");
+    return renderedEventMiss("UNMAPPED_ELEMENT");
   }
 
   async highlight(highlight: ScoreHighlight): Promise<void> {
@@ -452,6 +543,30 @@ export class OsmdRenderer implements ScoreRenderer {
     return Object.freeze({ insideContainer: false });
   }
 
+  #resolveRenderedEventOwnership(initial: Element): RenderedEventElementOwnershipResult {
+    let current: Element | null = initial;
+    let resolved: OsmdRenderedEventTargetRef | undefined;
+    while (current !== null) {
+      if (current === this.#container) {
+        return resolved === undefined
+          ? Object.freeze({ insideContainer: true })
+          : Object.freeze({ insideContainer: true, target: resolved });
+      }
+      const owner = this.#renderedEventRefByElement.get(current);
+      if (owner === AMBIGUOUS_HIT_OWNER) {
+        return Object.freeze({ insideContainer: true, reason: "AMBIGUOUS_OWNERSHIP" });
+      }
+      if (owner !== undefined) {
+        if (resolved !== undefined && !sameRenderedEventTargetRef(resolved, owner)) {
+          return Object.freeze({ insideContainer: true, reason: "AMBIGUOUS_OWNERSHIP" });
+        }
+        resolved = owner;
+      }
+      current = current.parentElement;
+    }
+    return Object.freeze({ insideContainer: false });
+  }
+
   #rebuildHitTestIndex(): void {
     this.#resetHitTestIndex();
     const osmd = this.#ensureOsmd();
@@ -466,9 +581,28 @@ export class OsmdRenderer implements ScoreRenderer {
           if (indexedGraphicalNoteCount > MAX_HIT_TEST_NOTE_ELEMENTS) {
             throw new RangeError(`Rendered note hit-test index exceeds ${MAX_HIT_TEST_NOTE_ELEMENTS} graphical notes.`);
           }
+          const eventIndex = entry.voice === undefined ? entry.globalIndex : entry.voiceIndex as number;
+          const eventTarget: OsmdRenderedEventTargetRef = entry.voice === undefined
+            ? Object.freeze({
+                kind: this.#isRest(entry.note) ? "REST" : "NOTE",
+                partId: instrument.IdString,
+                measureIndex,
+                eventIndex,
+              })
+            : Object.freeze({
+                kind: this.#isRest(entry.note) ? "REST" : "NOTE",
+                partId: instrument.IdString,
+                measureIndex,
+                eventIndex,
+                voice: entry.voice,
+              });
+
           if (this.#isRest(entry.note)) {
             const restGroup = this.#resolveOwnedGraphicalGroup(entry.note);
-            if (restGroup !== null) this.#registerHitTestElement(restGroup, NO_NOTE_HIT_OWNER);
+            if (restGroup !== null) {
+              this.#registerHitTestElement(restGroup, NO_NOTE_HIT_OWNER);
+              this.#registerRenderedEventHitTestElement(restGroup, eventTarget);
+            }
             continue;
           }
           const element = this.#resolveExactNoteheadElement(entry.note);
@@ -481,8 +615,12 @@ export class OsmdRenderer implements ScoreRenderer {
                 voice: entry.voice,
               });
           this.#registerHitTestElement(element, target);
+          this.#registerRenderedEventHitTestElement(element, eventTarget);
           const group = this.#resolveOwnedGraphicalGroup(entry.note);
-          if (group !== null && group !== element) this.#registerHitTestElement(group, target);
+          if (group !== null && group !== element) {
+            this.#registerHitTestElement(group, target);
+            this.#registerRenderedEventHitTestElement(group, eventTarget);
+          }
         }
       }
     }
@@ -504,8 +642,24 @@ export class OsmdRenderer implements ScoreRenderer {
     this.#noteRefByElement.set(element, AMBIGUOUS_HIT_OWNER);
   }
 
+  #registerRenderedEventHitTestElement(element: Element, owner: RenderedEventHitOwner): void {
+    if (!this.#renderedEventRefByElement.has(element)) {
+      this.#renderedEventRefByElement.set(element, owner);
+      return;
+    }
+    const previous = this.#renderedEventRefByElement.get(element);
+    if (previous === undefined || previous === AMBIGUOUS_HIT_OWNER) return;
+    if (owner === AMBIGUOUS_HIT_OWNER) {
+      this.#renderedEventRefByElement.set(element, AMBIGUOUS_HIT_OWNER);
+      return;
+    }
+    if (isRenderedEventRefOwner(previous) && isRenderedEventRefOwner(owner) && sameRenderedEventTargetRef(previous, owner)) return;
+    this.#renderedEventRefByElement.set(element, AMBIGUOUS_HIT_OWNER);
+  }
+
   #resetHitTestIndex(): void {
     this.#noteRefByElement = new WeakMap();
+    this.#renderedEventRefByElement = new WeakMap();
   }
 
   #ensureHighlightStyle(): void {
