@@ -216,6 +216,14 @@ export class OsmdRenderer implements ScoreRenderer {
     }
     if (candidates.length === 0) return miss("NO_ELEMENT_AT_POINT");
 
+    // Preserve topmost known non-note ownership. On iOS/SVG, elementsFromPoint()
+    // can also expose a lower note group at the same coordinates. A rendered rest
+    // must not fall through to that lower note and become a false note HIT.
+    if (initial !== null) {
+      const topOwnership = this.#resolveElementOwnership(initial);
+      if (topOwnership.reason === "NO_NOTE_OWNER") return miss("NO_NOTE_OWNER");
+    }
+
     let resolved: ScoreNoteRef | undefined;
     let sawInsideContainer = false;
     let sawAmbiguous = false;
