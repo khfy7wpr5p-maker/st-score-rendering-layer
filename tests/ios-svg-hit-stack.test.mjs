@@ -22,6 +22,14 @@ function graphicalNote(notehead, group) {
   };
 }
 
+function graphicalRest(group) {
+  return {
+    sourceNote: { isRest() { return true; } },
+    getSVGGElement() { return group; },
+    getNoteheadSVGs() { return []; },
+  };
+}
+
 function createHarness() {
   let initial = null;
   let stack = [];
@@ -43,6 +51,7 @@ function createHarness() {
   const noteA = element("note-a", groupA);
   const groupB = element("group-b", container);
   const noteB = element("note-b", groupB);
+  const restGroup = element("rest-group", container);
 
   const engine = {
     Sheet: {
@@ -54,7 +63,7 @@ function createHarness() {
         staffEntries: [{
           graphicalVoiceEntries: [{
             parentVoiceEntry: { ParentVoice: { VoiceId: 1 } },
-            notes: [graphicalNote(noteA, groupA), graphicalNote(noteB, groupB)],
+            notes: [graphicalNote(noteA, groupA), graphicalNote(noteB, groupB), graphicalRest(restGroup)],
           }],
         }],
       }]],
@@ -67,7 +76,7 @@ function createHarness() {
 
   return {
     renderer: new OsmdRenderer(container, () => engine),
-    elements: { overlay, noteA, noteB },
+    elements: { overlay, noteA, noteB, restGroup },
     point(top, elements) {
       initial = top;
       stack = elements;
@@ -87,6 +96,16 @@ test("iOS-style unmapped top SVG element can expose one exact note owner lower i
   assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
     kind: "HIT",
     target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 },
+  });
+});
+
+test("topmost known rest ownership blocks a lower note owner in the same iOS hit stack", async () => {
+  const harness = createHarness();
+  await render(harness);
+  harness.point(harness.elements.restGroup, [harness.elements.restGroup, harness.elements.noteA]);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS",
+    reason: "NO_NOTE_OWNER",
   });
 });
 
