@@ -33,6 +33,17 @@ jobs:
         run: npm run test:webkit
       - name: R6 headless visual-regression gate
         run: npm run test:headless
+      - name: Export Student App browser runtime
+        env:
+          ST_SCORE_RENDERER_SOURCE_REVISION: 78eec1d958923e871b5069f5026eed9e4ead2c33
+        run: npm run export:browser-runtime
+      - name: Upload Student App browser runtime
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: student-browser-runtime
+          path: dist/browser-runtime
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload generated lockfile for review
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
