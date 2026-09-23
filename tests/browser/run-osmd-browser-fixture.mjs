@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 const repoRoot=path.resolve(fileURLToPath(new URL("../..",import.meta.url)));
-const fixtures=["osmd-browser-fixture.html","osmd-interaction-fixture.html","osmd-chord-notehead-research-fixture.html","osmd-note-interaction-fixture.html","osmd-tablature-fixture.html","osmd-accessibility-fixture.html","osmd-browser-host-fixture.html","workstation-runtime-export-fixture.html"];
+const fixtures=["osmd-browser-fixture.html","osmd-interaction-fixture.html","osmd-chord-notehead-research-fixture.html","osmd-note-interaction-fixture.html","osmd-tablature-fixture.html","osmd-accessibility-fixture.html","osmd-browser-host-fixture.html","workstation-runtime-export-fixture.html","generated-runtime-csp-fixture.html"];
 const candidates=[process.env.CHROME_BIN,"google-chrome","google-chrome-stable","chromium","chromium-browser"].filter(Boolean);let chrome;
 for(const candidate of candidates){const probe=spawnSync(candidate,["--version"],{encoding:"utf8"});if(probe.status===0){chrome=candidate;break}}
 if(!chrome){console.error("Browser gate failed closed: no supported Chrome/Chromium executable found.");process.exit(1)}

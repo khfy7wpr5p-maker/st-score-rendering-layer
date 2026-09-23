@@ -9,6 +9,7 @@ const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const fixtures = [
   "osmd-browser-fixture.html",
   "osmd-note-interaction-fixture.html",
+  "generated-runtime-csp-fixture.html",
 ];
 
 const contentTypes = new Map([
