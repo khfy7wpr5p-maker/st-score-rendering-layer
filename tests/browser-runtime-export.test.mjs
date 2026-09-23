@@ -15,6 +15,10 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function cspSha256(content) {
+  return createHash("sha256").update(content).digest("base64");
+}
+
 test("browser runtime is consumer-neutral and exposes bounded presentation interactions", async () => {
   await rm(outputRoot, { recursive: true, force: true });
   try {
@@ -47,6 +51,16 @@ test("browser runtime is consumer-neutral and exposes bounded presentation inter
     assert.match(indexHtml, /\.\/browser-bootstrap\.mjs/);
     assert.doesNotMatch(indexHtml, /workstation-bootstrap\.mjs/);
     assert.match(indexHtml, /connect-src 'none'/);
+    assert.doesNotMatch(indexHtml, /'unsafe-inline'/);
+
+    const csp = indexHtml.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)?.[1];
+    const styleSource = indexHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1];
+    const importMapSource = indexHtml.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(csp);
+    assert.ok(styleSource);
+    assert.ok(importMapSource);
+    assert.ok(csp.includes(`style-src 'sha256-${cspSha256(styleSource)}'`));
+    assert.ok(csp.includes(`script-src 'self' 'sha256-${cspSha256(importMapSource)}'`));
 
     await assert.rejects(access(path.join(outputRoot, "workstation-bootstrap.mjs")));
 
