@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Generated runtime CSP fixture</title>
+</head>
+<body>
+  <iframe id="runtime" src="../../dist/workstation-runtime/index.html" title="Generated runtime"></iframe>
+  <div id="status" data-render-pass="false">CSP_RUNTIME_PENDING</div>
+  <div id="evidence"></div>
+  <script>
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1"><part-name>Guitar</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration><type>whole</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const frame = document.getElementById("runtime");
+    const status = document.getElementById("status");
+    const evidence = document.getElementById("evidence");
+
+    frame.addEventListener("load", async () => {
+      try {
+        const runtimeWindow = frame.contentWindow;
+        const runtimeDocument = frame.contentDocument;
+        if (!runtimeWindow || !runtimeDocument) throw new Error("generated runtime frame is inaccessible");
+
+        const deadline = Date.now() + 10000;
+        while (runtimeDocument.documentElement.dataset.stScoreRuntimeReady !== "true") {
+          if (Date.now() > deadline) throw new Error("generated runtime did not become ready under CSP");
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        const host = runtimeWindow.__ST_SCORE_RENDER_HOST__;
+        if (!host || typeof host.renderMusicXml !== "function") {
+          throw new Error("generated runtime host is unavailable");
+        }
+
+        await host.renderMusicXml({
+          ticket: "1",
+          contractVersion: "0.2.0",
+          musicxml: xml,
+          pageMode: "continuous",
+          autoResize: false,
+          drawTitle: false,
+          drawComposer: false,
+        });
+
+        if (!runtimeDocument.querySelector("#st-score-root svg")) {
+          throw new Error("generated runtime produced no SVG under CSP");
+        }
+
+        evidence.innerHTML = '<svg data-csp-runtime-evidence="true"></svg>';
+        status.dataset.renderPass = "true";
+        status.textContent = "CSP_RUNTIME_PASS";
+      } catch (error) {
+        status.dataset.renderPass = "false";
+        status.dataset.renderError = String(error?.message ?? error);
+        status.textContent = "CSP_RUNTIME_FAIL";
+      }
+    });
+  </script>
+</body>
+</html>
