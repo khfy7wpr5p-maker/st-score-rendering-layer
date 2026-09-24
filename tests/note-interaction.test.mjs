@@ -29,7 +29,7 @@ function graphicalNote(element, { rest = false, group = element } = {}) {
   };
 }
 
-function createInteractionHarness({ ambiguousChord = false, includeRest = false, includeTab = false, sharedTabGroup = false } = {}) {
+function createInteractionHarness({ ambiguousChord = false, includeRest = false, includeTab = false, sharedTabGroup = false, tabWithoutGroup = false } = {}) {
   let hitElement = null;
   const styleNodes = [];
   const container = createElement("container");
@@ -78,7 +78,7 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false,
   };
   const tabNote = {
     sourceNote: { isRest() { return false; } },
-    getSVGGElement() { return tabGroup; },
+    getSVGGElement() { return tabWithoutGroup ? null : tabGroup; },
     getNoteheadSVGs() { return []; },
   };
   const staff1 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p1staff2v1n2, { group: staff2Group }), ...(includeTab ? [tabNote, ...(sharedTabGroup ? [{ ...tabNote }] : [])] : [])] }] }] };
@@ -150,6 +150,16 @@ test("two TAB notes sharing one group remain ambiguous", async () => {
   harness.hit(harness.elements.tabFret);
   assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
     kind: "MISS", reason: "AMBIGUOUS_OWNERSHIP",
+  });
+});
+
+test("TAB note without a notehead or owned group renders without a false hit target", async () => {
+  const harness = createInteractionHarness({ includeTab: true, tabWithoutGroup: true });
+  await renderHarness(harness);
+  assert.deepEqual(await harness.renderer.exportSvg(), ["<svg></svg>"]);
+  harness.hit(harness.elements.tabFret);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS", reason: "UNMAPPED_ELEMENT",
   });
 });
 
