@@ -73,16 +73,30 @@ test("BrowserScoreHost exposes exact note hit-test and epoch-bound detailed evid
 
 test("BrowserScoreHost advances render epoch and makes prior detailed evidence stale by comparison", async () => {
   const container = createContainer();
-  const first = createRenderer();
-  const second = createRenderer({
-    resolveNoteAtClientPoint() { return null; },
-    resolveNoteAtClientPointDetailed() { return Object.freeze({ kind: "MISS", reason: "UNMAPPED_ELEMENT" }); },
+  let activeSourceId = null;
+  const first = createRenderer({
+    async load(source) { activeSourceId = source.sourceId ?? null; },
+    resolveNoteAtClientPoint() {
+      return activeSourceId === "score-B"
+        ? null
+        : { partId: "P1", measureIndex: 0, noteIndex: 1, voice: 2 };
+    },
+    resolveNoteAtClientPointDetailed() {
+      return activeSourceId === "score-B"
+        ? Object.freeze({ kind: "MISS", reason: "UNMAPPED_ELEMENT" })
+        : Object.freeze({
+            kind: "HIT",
+            target: { partId: "P1", measureIndex: 0, noteIndex: 1, voice: 2 },
+          });
+    },
   });
-  const renderers = [first.renderer, second.renderer];
-  let factoryIndex = 0;
+  let factoryCalls = 0;
   const host = new BrowserScoreHost(container, {
     expectedContractVersion: "0.2.0",
-    rendererFactory: () => renderers[factoryIndex++],
+    rendererFactory: () => {
+      factoryCalls += 1;
+      return first.renderer;
+    },
   });
 
   const firstRender = await host.renderMusicXml("<score-partwise/>", {}, "score-A");
@@ -98,7 +112,8 @@ test("BrowserScoreHost advances render epoch and makes prior detailed evidence s
     sourceId: "score-B",
     reason: "UNMAPPED_ELEMENT",
   });
-  assert.equal(first.calls.disposed, 1, "replacement disposes the renderer that owned the stale epoch");
+  assert.equal(factoryCalls, 1, "replacement keeps the initialized renderer warm");
+  assert.equal(first.calls.disposed, 0, "valid replacement does not dispose the warm renderer");
 });
 
 test("BrowserScoreHost detailed evidence normalizes bounded data and rejects malformed renderer results", async () => {
