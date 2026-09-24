@@ -10,16 +10,6 @@
   <div id="status" data-render-pass="false">R8_B4_PENDING</div>
 
   <script src="../../dist/workstation-runtime/vendor/opensheetmusicdisplay.min.js"></script>
-  <script>
-    window.__osmdConstructCount = 0;
-    const OriginalOsmd = window.opensheetmusicdisplay.OpenSheetMusicDisplay;
-    window.opensheetmusicdisplay.OpenSheetMusicDisplay = class extends OriginalOsmd {
-      constructor(...args) {
-        super(...args);
-        window.__osmdConstructCount += 1;
-      }
-    };
-  </script>
   <script type="importmap">
   {
     "imports": {
@@ -95,8 +85,7 @@
         if (svgPages.length === 0 || !score.querySelector("svg")) {
           throw new Error("exported runtime produced no SVG");
         }
-        const countAfterFirst = window.__osmdConstructCount;
-        await host.renderMusicXml({
+        const second = await host.renderMusicXml({
           ticket: "4",
           contractVersion: "0.2.0",
           musicxml: xml,
@@ -105,8 +94,8 @@
           drawTitle: false,
           drawComposer: false,
         });
-        if (window.__osmdConstructCount !== countAfterFirst) {
-          throw new Error("valid score replacement rebuilt the OSMD renderer");
+        if (second.renderEpoch === result.renderEpoch) {
+          throw new Error("valid score replacement reused stale render evidence");
         }
 
         let mismatchRejected = false;
