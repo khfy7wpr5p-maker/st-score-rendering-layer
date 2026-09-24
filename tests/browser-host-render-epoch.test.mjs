@@ -32,11 +32,16 @@ function renderer({ failRender = false } = {}) {
 }
 
 test("failed replacement invalidates prior detailed hit evidence and active epoch", async () => {
-  const renderers = [renderer(), renderer({ failRender: true })];
-  let index = 0;
+  let renderCount = 0;
+  const warmRenderer = renderer();
+  warmRenderer.render = async () => {
+    renderCount += 1;
+    if (renderCount > 1) throw new Error("synthetic replacement failure");
+    return { rendererId: "fake", contractVersion: "0.2.0" };
+  };
   const host = new BrowserScoreHost(container(), {
     expectedContractVersion: "0.2.0",
-    rendererFactory: () => renderers[index++],
+    rendererFactory: () => warmRenderer,
   });
 
   const firstRender = await host.renderMusicXml("<score-partwise/>", {}, "score-A");
