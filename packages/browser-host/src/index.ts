@@ -317,18 +317,21 @@ export class BrowserScoreHost {
         throw error;
       }
 
-      await this.#resetCurrentRenderer();
       this.#requireAvailable();
 
       try {
-        const renderer = this.#rendererFactory(this.#container);
-        this.#renderer = renderer;
+        const renderer = this.#renderer ?? this.#rendererFactory(this.#container);
+        if (this.#renderer === undefined) {
+          this.#renderer = renderer;
+        }
         if (!renderer.capabilities.has("musicxml-render") || !renderer.capabilities.has("svg-export")) {
           throw new BrowserScoreHostUnavailableError(
             "Selected renderer does not provide the required browser-host capabilities.",
           );
         }
 
+        this.#activeRenderEpoch = undefined;
+        this.#activeEvidenceSourceId = undefined;
         await renderer.load(source);
         this.#requireAvailable();
         const result = await renderer.render(options);
