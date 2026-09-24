@@ -106,9 +106,13 @@ test("browser host renders bounded in-memory MusicXML through an ST renderer", a
   assert.deepEqual(await host.exportSvg(), ["<svg data-fake=\"true\"></svg>"]);
 
   await host.renderMusicXml("<score-partwise></score-partwise>");
-  assert.equal(renderers.length, 2);
-  assert.equal(renderers[0].disposed, true, "previous renderer is disposed before replacement");
-  assert.ok(container.clearCount >= 2, "presentation container is cleared between render requests");
+  assert.equal(renderers.length, 1, "replacement reuses the initialized renderer");
+  assert.equal(renderers[0].disposed, false, "renderer stays warm across valid replacements");
+  assert.deepEqual(renderers[0].loadedSource, {
+    kind: "musicxml",
+    content: "<score-partwise></score-partwise>",
+  });
+  assert.equal(container.clearCount, 0, "valid replacement does not tear down the presentation container");
 });
 
 test("invalid MusicXML clears stale presentation without invoking a new renderer", async () => {
