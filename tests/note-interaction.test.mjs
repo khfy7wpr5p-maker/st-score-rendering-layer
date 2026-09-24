@@ -29,7 +29,7 @@ function graphicalNote(element, { rest = false, group = element } = {}) {
   };
 }
 
-function createInteractionHarness({ ambiguousChord = false, includeRest = false } = {}) {
+function createInteractionHarness({ ambiguousChord = false, includeRest = false, includeTab = false, sharedTabGroup = false, tabWithoutGroup = false } = {}) {
   let hitElement = null;
   const styleNodes = [];
   const container = createElement("container");
@@ -59,6 +59,8 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false 
   const p1v2Stem = createElement("p1-v2-stem", voice2Group);
   const staff2Group = createElement("p1-staff2-v1-group", container);
   const p1staff2v1n2 = createElement("p1-staff2-v1-n2", staff2Group);
+  const tabGroup = createElement("p1-tab-fret-group", container);
+  const tabFret = createElement("p1-tab-fret", tabGroup);
   const p2Group = createElement("p2-v1-group", container);
   const p2v1n0 = createElement("p2-v1-n0", p2Group);
   const restElement = createElement("rest", container);
@@ -74,7 +76,12 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false 
       { graphicalVoiceEntries: [] },
     ],
   };
-  const staff1 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p1staff2v1n2, { group: staff2Group })] }] }] };
+  const tabNote = {
+    sourceNote: { isRest() { return false; } },
+    getSVGGElement() { return tabWithoutGroup ? null : tabGroup; },
+    getNoteheadSVGs() { return []; },
+  };
+  const staff1 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p1staff2v1n2, { group: staff2Group }), ...(includeTab ? [tabNote, ...(sharedTabGroup ? [{ ...tabNote }] : [])] : [])] }] }] };
   const staff2 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p2v1n0, { group: p2Group })] }] }] };
 
   const engine = {
@@ -91,7 +98,7 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false 
   const renderer = new OsmdRenderer(container, () => engine);
   return {
     renderer, engine,
-    elements: { chordGroup, p1v1n0, p1v1n1, voice2Group, p1v2n0, p1v2Stem, p1staff2v1n2, p2v1n0, restElement, whitespace, outside },
+    elements: { chordGroup, p1v1n0, p1v1n1, voice2Group, p1v2n0, p1v2Stem, p1staff2v1n2, tabGroup, tabFret, p2v1n0, restElement, whitespace, outside },
     hit(element) { hitElement = element; },
   };
 }
@@ -121,6 +128,39 @@ test("note hit-test follows deterministic part/staff/voice/chord traversal", asy
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), null);
   harness.hit(null);
   assert.equal(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), null);
+});
+
+test("TAB fret group without a notehead keeps SVG visible and exact known notes interactive", async () => {
+  const harness = createInteractionHarness({ includeTab: true });
+  await renderHarness(harness);
+  assert.deepEqual(await harness.renderer.exportSvg(), ["<svg></svg>"]);
+  harness.hit(harness.elements.p1v1n0);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), {
+    partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1,
+  });
+  harness.hit(harness.elements.tabFret);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 10, clientY: 20 }), {
+    partId: "P1", measureIndex: 0, noteIndex: 3, voice: 1,
+  });
+});
+
+test("two TAB notes sharing one group remain ambiguous", async () => {
+  const harness = createInteractionHarness({ includeTab: true, sharedTabGroup: true });
+  await renderHarness(harness);
+  harness.hit(harness.elements.tabFret);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS", reason: "AMBIGUOUS_OWNERSHIP",
+  });
+});
+
+test("TAB note without a notehead or owned group renders without a false hit target", async () => {
+  const harness = createInteractionHarness({ includeTab: true, tabWithoutGroup: true });
+  await renderHarness(harness);
+  assert.deepEqual(await harness.renderer.exportSvg(), ["<svg></svg>"]);
+  harness.hit(harness.elements.tabFret);
+  assert.deepEqual(harness.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "MISS", reason: "UNMAPPED_ELEMENT",
+  });
 });
 
 test("detailed hit-test exposes bounded deterministic hit and miss classes", async () => {
