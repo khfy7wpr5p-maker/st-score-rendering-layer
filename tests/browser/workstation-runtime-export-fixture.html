@@ -85,6 +85,18 @@
         if (svgPages.length === 0 || !score.querySelector("svg")) {
           throw new Error("exported runtime produced no SVG");
         }
+        const second = await host.renderMusicXml({
+          ticket: "4",
+          contractVersion: "0.2.0",
+          musicxml: xml,
+          pageMode: "continuous",
+          autoResize: false,
+          drawTitle: false,
+          drawComposer: false,
+        });
+        if (second.renderEpoch === result.renderEpoch) {
+          throw new Error("valid score replacement reused stale render evidence");
+        }
 
         let mismatchRejected = false;
         try {
