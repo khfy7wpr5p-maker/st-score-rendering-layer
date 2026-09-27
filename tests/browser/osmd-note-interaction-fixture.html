@@ -157,6 +157,7 @@ async function proveAtWidth(width){
   if(noteMeasureEvidence.renderEpoch===secondRender.renderEpoch||whitespaceMeasure.evidence.renderEpoch===secondRender.renderEpoch)throw new Error("replacement render reused stale measure evidence");
   stage(`${width}:rerender-measure`);const freshMeasure=pointForMeasureWhitespace(host,measureTarget);if(freshMeasure.evidence.renderEpoch!==secondRender.renderEpoch)throw new Error("replacement measure hit did not use new epoch");if(freshMeasure.evidence.sourceId!==`note-interaction-rerender-${width}`)throw new Error("replacement measure sourceId drift");
   stage(`${width}:rerender-highlight`);await host.highlight({target:fresh.evidence.target,className:"teacher-focus"});if(rerendered.getAttribute("data-st-score-highlight")!=="true"||!rerendered.classList.contains("teacher-focus"))throw new Error("fresh rebind highlight failed after rerender");await host.clearHighlights();
+  stage(`${width}:dispose`);await host.dispose();if(score.querySelector("svg"))throw new Error("width fixture dispose left stale SVG page identity");
   stage(`${width}:done`);
 }
 
