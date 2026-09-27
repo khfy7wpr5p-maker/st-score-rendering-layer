@@ -31,14 +31,14 @@ Fresh-read baseline confirms:
 - replacement render invalidates prior presentation evidence;
 - generic browser runtime is generated from the reviewed Workstation bootstrap path;
 - `ScoreRenderer` base contract does not currently require hit-test methods;
-- OSMD is exact-pinned to `2.1.2`; VexFlow is `1.2.93`.
+- OSMD is exact-pinned to `2.1.2`; OSMD 2.1.2 declares VexFlow `^1.2.93`, and this repository does not commit a root lockfile.
 
 Upstream OSMD 2.1.2 evidence used by this design:
 
 - every `GraphicalMeasure` has `PositionAndShape: BoundingBox`;
 - a graphical measure is attached to a `ParentMusicSystem`, whose parent exposes `GraphicalMusicPage.PageNumber`;
 - OSMD graphical coordinates use 10 VexFlow/SVG units per OSMD unit;
-- VexFlow 1.2.93 SVG zoom is implemented through the SVG `viewBox`, so browser SVG coordinate transforms can account for zoom without manually applying devicePixelRatio, scroll offsets, or a guessed CSS scale.
+- VexFlow `1.2.93`—the minimum version declared by OSMD 2.1.2—implements SVG zoom through the SVG `viewBox`; because the resolved VexFlow dependency is not exact-pinned here, implementation must validate the live SVG transform behavior rather than depend on a resolved package-version assumption.
 
 ## 3. Alternatives considered
 
@@ -192,7 +192,7 @@ For the selected page:
 
 - page association comes from current OSMD graphical page number and the SVG page owned by the same renderer container;
 - browser client coordinates are converted to SVG user coordinates with the live SVG screen transform / inverse transform;
-- SVG user coordinates are converted to OSMD units using OSMD 2.1.2’s exact 10-units-to-pixel drawing convention;
+- SVG user coordinates are converted to OSMD units using OSMD 2.1.2’s 10 SVG user units per OSMD unit drawing convention;
 - VexFlow SVG zoom must be left to its viewBox/browser transform; do not manually apply `window.scrollX`, `scrollY`, `devicePixelRatio`, cached offsets, or a proximity correction.
 
 If the live SVG transform is absent, non-invertible, non-finite, or does not correspond to the indexed page, the API fails closed.
