@@ -22,10 +22,81 @@ import { OsmdRenderer } from "@st/score-renderer-osmd";
 import { BrowserScoreHost } from "../../packages/browser-host/dist/index.js";
 
 const xml=`<?xml version="1.0" encoding="UTF-8"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>Keyboard</part-name></score-part><score-part id="P2"><part-name>Flute</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice><staff>1</staff></note><note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice><staff>1</staff></note><note><rest/><duration>3</duration><type>half</type><dot/><voice>1</voice><staff>1</staff></note><backup><duration>4</duration></backup><note><pitch><step>G</step><octave>3</octave></pitch><duration>4</duration><type>whole</type><voice>2</voice><staff>2</staff></note></measure></part><part id="P2"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes><note><pitch><step>A</step><octave>5</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice></note><note><rest/><duration>3</duration><type>half</type><dot/><voice>1</voice></note></measure></part></score-partwise>`;
+function buildMultiPageXml(){
+  const measures=[];
+  for(let number=1;number<=24;number+=1){
+    const attributes=number===1?`<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>`:"";
+    const print=number===9||number===17?`<print new-page="yes"/>`:number>1?`<print new-system="yes"/>`:"";
+    measures.push(`<measure number="${number}">${print}${attributes}<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note></measure>`);
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>Guitar</part-name></score-part></part-list><part id="P1">${measures.join("")}</part></score-partwise>`;
+}
+const multiPageXml=buildMultiPageXml();
 const status=document.getElementById("status"),score=document.getElementById("score");let adapter;
 function stage(value){status.dataset.stage=value}
 function forceLayout(){void document.documentElement.offsetHeight}
 function sameRef(a,b){return a?.partId===b.partId&&a?.measureIndex===b.measureIndex&&a?.noteIndex===b.noteIndex&&a?.voice===b.voice}
+function sameMeasureRef(a,b){return a?.partId===b.partId&&a?.measureIndex===b.measureIndex}
+function exactMeasureEvidence(host,point,expected){const result=host.hitTestMeasureDetailed(point);return result.kind==="HIT"&&sameMeasureRef(result.target,expected)?result:null}
+function requireMeasureEvidence(host,point,expected,renderEpoch,sourceId){
+  const evidence=exactMeasureEvidence(host,point,expected);
+  if(!evidence)throw new Error(`measure hit did not resolve ${JSON.stringify(expected)}`);
+  if(evidence.renderEpoch!==renderEpoch)throw new Error("measure hit epoch does not match active render");
+  if(sourceId!==undefined&&evidence.sourceId!==sourceId)throw new Error("measure hit sourceId drift");
+  return evidence;
+}
+function svgSamplePoints(svg){
+  const rect=svg.getBoundingClientRect();
+  if(!(rect.width>0&&rect.height>0))return [];
+  const out=[];
+  for(let yi=1;yi<=19;yi+=1)for(let xi=1;xi<=19;xi+=1){
+    out.push({clientX:rect.left+rect.width*(xi/20),clientY:rect.top+rect.height*(yi/20)});
+  }
+  return out;
+}
+function pointForRenderedRest(host,expectedMeasure){
+  const candidates=[...score.querySelectorAll("svg g,svg path,svg text,svg rect")];
+  for(const candidate of candidates){
+    if(!(candidate instanceof Element))continue;
+    const rect=candidate.getBoundingClientRect();
+    if(!(rect.width>0&&rect.height>0))continue;
+    for(const point of pointsForRect(rect)){
+      const landed=document.elementFromPoint(point.clientX,point.clientY);
+      if(!(landed instanceof Element)||!score.contains(landed)||landed.closest("svg")===null)continue;
+      let event;
+      try{event=host.hitTestRenderedEventDetailed(point)}catch{continue}
+      if(event.kind!=="HIT"||event.target.kind!=="REST"||!sameMeasureRef(event.target,expectedMeasure))continue;
+      const evidence=exactMeasureEvidence(host,point,expectedMeasure);
+      if(evidence)return {point,evidence,event};
+    }
+  }
+  throw new Error(`no rendered rest point resolved measure ${JSON.stringify(expectedMeasure)}`);
+}
+function pointForMeasureWhitespace(host,expectedMeasure){
+  for(const svg of score.querySelectorAll("svg")){
+    for(const point of svgSamplePoints(svg)){
+      const landed=document.elementFromPoint(point.clientX,point.clientY);
+      if(!(landed instanceof Element)||!score.contains(landed)||landed.closest("svg")!==svg)continue;
+      const measure=host.hitTestMeasureDetailed(point);
+      if(measure.kind!=="HIT"||!sameMeasureRef(measure.target,expectedMeasure))continue;
+      const note=host.hitTestNoteDetailed(point);
+      const event=host.hitTestRenderedEventDetailed(point);
+      if(note.kind==="MISS"&&event.kind==="MISS")return {point,evidence:measure};
+    }
+  }
+  throw new Error(`no true measure whitespace point resolved ${JSON.stringify(expectedMeasure)}`);
+}
+function pointForNoMeasureOwner(host){
+  for(const svg of score.querySelectorAll("svg")){
+    for(const point of svgSamplePoints(svg)){
+      const landed=document.elementFromPoint(point.clientX,point.clientY);
+      if(!(landed instanceof Element)||!score.contains(landed)||landed.closest("svg")!==svg)continue;
+      const measure=host.hitTestMeasureDetailed(point);
+      if(measure.kind==="MISS"&&measure.reason==="NO_MEASURE_OWNER")return point;
+    }
+  }
+  throw new Error("no SVG point produced NO_MEASURE_OWNER");
+}
 function pointsForRect(rect){const out=[];for(const fx of [.2,.35,.5,.65,.8])for(const fy of [.2,.35,.5,.65,.8])out.push({clientX:rect.left+rect.width*fx,clientY:rect.top+rect.height*fy});return out}
 function exactEvidence(host,point,expected){const result=host.hitTestNoteDetailed(point);return result.kind==="HIT"&&sameRef(result.target,expected)?result:null}
 function requireSvgSurfaceAt(point){const landed=document.elementFromPoint(point.clientX,point.clientY);if(!(landed instanceof Element)||!score.contains(landed)||landed.closest("svg")===null)throw new Error("exact tap did not land on renderer SVG surface");return landed}
@@ -50,10 +121,15 @@ async function proveAtWidth(width){
   stage(`${width}:ambiguous-chord`);pointForAmbiguousChord(host,elements[0],elements[1]);
 
   stage(`${width}:repeat-hit`);const chordHit=pointForExactTarget(host,elements[1],chord1);if(!sameRef(host.hitTestNote(chordHit.point),chord1))throw new Error("repeated chord hit-test was not deterministic");assertNoRendererOverlayAt(chordHit.point);
+  const measureTarget={partId:"P1",measureIndex:0};
+  stage(`${width}:measure-note`);const noteMeasureEvidence=requireMeasureEvidence(host,chordHit.point,measureTarget,firstRender.renderEpoch,`note-interaction-${width}`);
+  stage(`${width}:measure-rest`);const restMeasure=pointForRenderedRest(host,measureTarget);if(restMeasure.evidence.renderEpoch!==firstRender.renderEpoch)throw new Error("rest measure hit epoch drift");
+  stage(`${width}:measure-whitespace`);const whitespaceMeasure=pointForMeasureWhitespace(host,measureTarget);if(whitespaceMeasure.evidence.renderEpoch!==firstRender.renderEpoch)throw new Error("measure whitespace epoch drift");if(whitespaceMeasure.evidence.sourceId!==`note-interaction-${width}`)throw new Error("measure whitespace sourceId drift");
 
   if(width===320){
     stage("320:scroll");window.scrollTo(0,160);forceLayout();if(window.scrollY<=0)throw new Error("mobile scroll setup did not move viewport");
     stage("320:scroll-hit");const scrolled=pointForExactTarget(host,elements[1],chord1);if(scrolled.evidence.renderEpoch!==firstRender.renderEpoch)throw new Error("scroll hit used stale epoch");assertNoRendererOverlayAt(scrolled.point);
+    stage("320:scroll-measure");const scrolledWhitespace=pointForMeasureWhitespace(host,measureTarget);if(scrolledWhitespace.evidence.renderEpoch!==firstRender.renderEpoch)throw new Error("scrolled measure hit used stale epoch");if(!sameMeasureRef(scrolledWhitespace.evidence.target,measureTarget))throw new Error("scrolled measure hit changed target");
   }
 
   stage(`${width}:multi-highlight`);await host.highlight({target:chord1,className:"teacher-focus"});await host.highlight({target:part2,className:"secondary-focus"});
@@ -63,6 +139,7 @@ async function proveAtWidth(width){
   stage(`${width}:clear`);await host.clearHighlights();if(elements[1].getAttribute("data-st-score-highlight")!==null||elements[1].classList.contains("teacher-focus")||elements[3].classList.contains("secondary-focus"))throw new Error("clearHighlights left renderer-owned state");
 
   stage(`${width}:whitespace`);window.scrollTo(0,0);forceLayout();const sr=score.getBoundingClientRect();const whitespace=host.hitTestNoteDetailed({clientX:sr.left+2,clientY:sr.top+2});if(whitespace.kind!=="MISS")throw new Error("score whitespace produced a note hit");if(host.hitTestNote({clientX:Math.max(0,sr.right+20),clientY:5})!==null)throw new Error("outside coordinates produced a note hit");
+  if(width===320){stage("320:no-measure-owner");const noMeasurePoint=pointForNoMeasureOwner(host);const noMeasure=host.hitTestMeasureDetailed(noMeasurePoint);if(noMeasure.kind!=="MISS"||noMeasure.reason!=="NO_MEASURE_OWNER")throw new Error("inside-SVG outside-measure point did not fail closed");}
 
   stage(`${width}:pre-rerender-highlight`);await host.highlight({target:chord1,className:"teacher-focus"});const oldChordElement=elements[1];const oldEvidence=chordHit.evidence;if(oldChordElement.getAttribute("data-st-score-highlight")!=="true")throw new Error("pre-rerender highlight missing");
   stage(`${width}:rerender`);const secondRender=await host.renderMusicXml(xml,{autoResize:false,drawTitle:false,drawComposer:false},`note-interaction-rerender-${width}`);
@@ -72,12 +149,38 @@ async function proveAtWidth(width){
   if(oldChordElement.getAttribute("data-st-score-highlight")!==null||oldChordElement.classList.contains("teacher-focus"))throw new Error("rerender did not clear old highlight state");
 
   const rerendered=adapter.resolveRenderedNoteElement(chord1);stage(`${width}:rerender-hit`);const fresh=pointForExactTarget(host,rerendered,chord1);if(fresh.evidence.renderEpoch!==secondRender.renderEpoch)throw new Error("replacement tap did not use new render epoch");if(fresh.evidence.sourceId!==`note-interaction-rerender-${width}`)throw new Error("replacement sourceId drift");
+  if(noteMeasureEvidence.renderEpoch===secondRender.renderEpoch||whitespaceMeasure.evidence.renderEpoch===secondRender.renderEpoch)throw new Error("replacement render reused stale measure evidence");
+  stage(`${width}:rerender-measure`);const freshMeasure=pointForMeasureWhitespace(host,measureTarget);if(freshMeasure.evidence.renderEpoch!==secondRender.renderEpoch)throw new Error("replacement measure hit did not use new epoch");if(freshMeasure.evidence.sourceId!==`note-interaction-rerender-${width}`)throw new Error("replacement measure sourceId drift");
   stage(`${width}:rerender-highlight`);await host.highlight({target:fresh.evidence.target,className:"teacher-focus"});if(rerendered.getAttribute("data-st-score-highlight")!=="true"||!rerendered.classList.contains("teacher-focus"))throw new Error("fresh rebind highlight failed after rerender");await host.clearHighlights();
   stage(`${width}:done`);
 }
 
-const watchdog=setTimeout(()=>{status.dataset.renderPass="false";status.dataset.renderError=`timeout at ${status.dataset.stage||"unknown"}`;status.textContent="NOTE_INTERACTION_FAIL"},25000);
-(async()=>{try{stage("720:start");await proveAtWidth(720);stage("320:start");await proveAtWidth(320);clearTimeout(watchdog);Object.assign(status.dataset,{contractVersion:SCORE_RENDERER_CONTRACT_VERSION,chordExact:"true",uniqueDescendant:"true",ambiguousAbstain:"true",multiVoice:"true",multiStaff:"true",multiPart:"true",renderEpoch:"true",staleEvidence:"true",rerenderHighlight:"true",mobile320:"true",svgSurfaceOnly:"true",renderPass:"true",stage:"complete"});status.textContent="NOTE_INTERACTION_PASS"}catch(error){clearTimeout(watchdog);status.dataset.renderPass="false";status.dataset.renderError=String(error?.message??error);status.textContent="NOTE_INTERACTION_FAIL"}})();
+async function proveMultiPage(){
+  stage("multi-page:create");score.style.width="720px";window.scrollTo(0,0);forceLayout();
+  let activeAdapter;const host=new BrowserScoreHost(score,{expectedContractVersion:SCORE_RENDERER_CONTRACT_VERSION,rendererFactory(container){activeAdapter=new OsmdRenderer(container);adapter=activeAdapter;return activeAdapter}});
+  stage("multi-page:render");const rendered=await host.renderMusicXml(multiPageXml,{pageMode:"page",autoResize:false,drawTitle:false,drawComposer:false},"measure-multi-page");
+  const svgPages=[...score.querySelectorAll('svg[id^="osmdSvgPage"]')];
+  if(svgPages.length<2)throw new Error(`multi-page fixture produced only ${svgPages.length} SVG page(s)`);
+  const ids=svgPages.map(svg=>svg.id);if(new Set(ids).size!==ids.length)throw new Error("multi-page fixture produced duplicate renderer SVG page ids");
+  const firstBySvg=new Map();
+  for(let measureIndex=0;measureIndex<24;measureIndex+=1){
+    const target={partId:"P1",measureIndex,noteIndex:0,voice:1};
+    let element;try{element=activeAdapter.resolveRenderedNoteElement(target)}catch{continue}
+    const svg=element.closest('svg[id^="osmdSvgPage"]');
+    if(svg&&!firstBySvg.has(svg.id))firstBySvg.set(svg.id,{svg,element,target,measure:{partId:"P1",measureIndex}});
+  }
+  if(firstBySvg.size<2)throw new Error("multi-page fixture could not bind notes to two distinct renderer pages");
+  const pages=[...firstBySvg.values()].slice(0,2);
+  stage("multi-page:page-a");const pageA=pointForExactTarget(host,pages[0].element,pages[0].target);requireMeasureEvidence(host,pageA.point,pages[0].measure,rendered.renderEpoch,"measure-multi-page");const scrollA=window.scrollY;
+  stage("multi-page:page-b");const pageB=pointForExactTarget(host,pages[1].element,pages[1].target);requireMeasureEvidence(host,pageB.point,pages[1].measure,rendered.renderEpoch,"measure-multi-page");const scrollB=window.scrollY;
+  if(pages[0].svg.id===pages[1].svg.id)throw new Error("multi-page evidence reused one SVG page");
+  if(Math.abs(scrollB-scrollA)<20)throw new Error("multi-page scroll did not move between rendered pages");
+  const freshB=host.hitTestMeasureDetailed(pageB.point);if(freshB.kind!=="HIT"||!sameMeasureRef(freshB.target,pages[1].measure))throw new Error("fresh page-B client coordinates did not resolve page-B measure");
+  stage("multi-page:done");
+}
+
+const watchdog=setTimeout(()=>{status.dataset.renderPass="false";status.dataset.renderError=`timeout at ${status.dataset.stage||"unknown"}`;status.textContent="NOTE_INTERACTION_FAIL"},45000);
+(async()=>{try{stage("720:start");await proveAtWidth(720);stage("320:start");await proveAtWidth(320);stage("multi-page:start");await proveMultiPage();clearTimeout(watchdog);Object.assign(status.dataset,{contractVersion:SCORE_RENDERER_CONTRACT_VERSION,chordExact:"true",uniqueDescendant:"true",ambiguousAbstain:"true",multiVoice:"true",multiStaff:"true",multiPart:"true",renderEpoch:"true",staleEvidence:"true",rerenderHighlight:"true",mobile320:"true",svgSurfaceOnly:"true",measureHit:"true",measureRest:"true",measureWhitespace:"true",measureScroll:"true",multiPageMeasure:"true",renderPass:"true",stage:"complete"});status.textContent="NOTE_INTERACTION_PASS"}catch(error){clearTimeout(watchdog);status.dataset.renderPass="false";status.dataset.renderError=String(error?.message??error);status.textContent="NOTE_INTERACTION_FAIL"}})();
 </script>
 </body>
 </html>
