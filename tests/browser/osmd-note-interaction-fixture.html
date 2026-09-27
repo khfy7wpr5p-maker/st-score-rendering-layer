@@ -22,11 +22,12 @@ import { OsmdRenderer } from "@st/score-renderer-osmd";
 import { BrowserScoreHost } from "../../packages/browser-host/dist/index.js";
 
 const xml=`<?xml version="1.0" encoding="UTF-8"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>Keyboard</part-name></score-part><score-part id="P2"><part-name>Flute</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice><staff>1</staff></note><note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice><staff>1</staff></note><note><rest/><duration>3</duration><type>half</type><dot/><voice>1</voice><staff>1</staff></note><backup><duration>4</duration></backup><note><pitch><step>G</step><octave>3</octave></pitch><duration>4</duration><type>whole</type><voice>2</voice><staff>2</staff></note></measure></part><part id="P2"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes><note><pitch><step>A</step><octave>5</octave></pitch><duration>1</duration><type>quarter</type><voice>1</voice></note><note><rest/><duration>3</duration><type>half</type><dot/><voice>1</voice></note></measure></part></score-partwise>`;
+const multiPageMeasureCount=120;
 function buildMultiPageXml(){
   const measures=[];
-  for(let number=1;number<=24;number+=1){
+  for(let number=1;number<=multiPageMeasureCount;number+=1){
     const attributes=number===1?`<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>`:"";
-    const print=number===9||number===17?`<print new-page="yes"/>`:number>1?`<print new-system="yes"/>`:"";
+    const print=number===41||number===81?`<print new-page="yes"/>`:number>1?`<print new-system="yes"/>`:"";
     measures.push(`<measure number="${number}">${print}${attributes}<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><voice>1</voice></note></measure>`);
   }
   return `<?xml version="1.0" encoding="UTF-8"?><score-partwise version="3.1"><part-list><score-part id="P1"><part-name>Guitar</part-name></score-part></part-list><part id="P1">${measures.join("")}</part></score-partwise>`;
@@ -169,7 +170,7 @@ async function proveMultiPage(){
   if(svgPages.length<2)throw new Error(`multi-page fixture produced only ${svgPages.length} SVG page(s)`);
   const ids=svgPages.map(svg=>svg.id);if(new Set(ids).size!==ids.length)throw new Error("multi-page fixture produced duplicate renderer SVG page ids");
   const firstBySvg=new Map();
-  for(let measureIndex=0;measureIndex<24;measureIndex+=1){
+  for(let measureIndex=0;measureIndex<multiPageMeasureCount;measureIndex+=1){
     const target={partId:"P1",measureIndex,noteIndex:0,voice:1};
     let element;try{element=activeAdapter.resolveRenderedNoteElement(target)}catch{continue}
     const svg=element.closest('svg[id^="osmdSvgPage"]');
