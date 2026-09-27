@@ -395,7 +395,9 @@ export class OsmdRenderer implements ScoreRenderer {
 
     if (targets.length === 0) return measureMiss("NO_MEASURE_OWNER");
     if (targets.length > 1) return measureMiss("AMBIGUOUS_OWNERSHIP");
-    return measureHit(targets[0]);
+    const target = targets[0];
+    if (target === undefined) return measureMiss("NO_MEASURE_OWNER");
+    return measureHit(target);
   }
 
   resolveRenderedEventAtClientPointDetailed(point: OsmdClientPoint): OsmdRenderedEventHitDetailedResult {
