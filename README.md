@@ -12,7 +12,7 @@ The repository currently provides:
 - shared source validation and renderer lifecycle utilities (`@st/score-renderer-core`);
 - interactive browser rendering through the OSMD adapter;
 - deterministic headless SVG rendering for CI/visual QA;
-- browser-host APIs for render, SVG export, measure cursor, exact note hit-test and highlight;
+- browser-host APIs for render, SVG export, measure cursor, exact note hit-test, deterministic measure hit-test and highlight;
 - a reversible accessibility overlay;
 - renderer-owned Workstation and generic browser runtime exports with manifest/integrity metadata;
 - validated standard-notation + guitar-TAB rendering, including string/fret display evidence;
@@ -48,7 +48,9 @@ For the complete production-reality architecture, see [docs/ARCHITECTURE.md](doc
 
 The renderer does **not** bind touch/pointer listeners. A host supplies browser `clientX/clientY` coordinates to `hitTestNote()`.
 
-The OSMD adapter resolves the browser hit through `document.elementFromPoint()` and a renderer-owned DOM-to-`ScoreNoteRef` index. Exact noteheads are strongest identity targets; a uniquely owned graphical-note group may widen touch ownership to its stem/flag/dot descendants. Shared/ambiguous groups fail closed. There is no nearest-note search, pitch matching, radius expansion or consumer-side SVG scraping.
+The OSMD adapter resolves NOTE/REST hits through `document.elementFromPoint()` and renderer-owned DOM ownership maps. Exact noteheads are strongest identity targets; a uniquely owned graphical-note group may widen touch ownership to its stem/flag/dot descendants. Shared/ambiguous groups fail closed.
+
+For measure targeting, the renderer builds a bounded index from current OSMD `GraphicalMeasure.PositionAndShape` geometry, projects live client coordinates through the correct owned SVG page transform, and returns a measure only for a unique current-render owner. Missing/ambiguous page identity, invalid geometry and conflicting overlaps fail closed. There is no nearest-note/nearest-measure search, pitch matching, radius expansion or consumer-side SVG scraping.
 
 See [docs/NOTE-INTERACTION.md](docs/NOTE-INTERACTION.md) and [docs/MOBILE-SAFARI.md](docs/MOBILE-SAFARI.md).
 
