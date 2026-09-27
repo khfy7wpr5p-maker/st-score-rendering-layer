@@ -160,3 +160,12 @@ Every production consumer should:
 9. run the relevant real-runtime gate before advertising a capability.
 
 See [PUBLIC-API.md](PUBLIC-API.md), [NOTE-INTERACTION.md](NOTE-INTERACTION.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
+
+
+## Consumer use of measure hit-test
+
+The consumer owns the physical pointer/touch event and passes fresh `clientX/clientY` to `hitTestMeasureDetailed`. On HIT, the returned `{ partId, measureIndex }` is only a rendered presentation locator. The consumer must validate the current `renderEpoch`, resolve the locator into its own canonical score/playback model, and then decide whether to replay a measure, move a cursor or update UI state.
+
+Do not cache browser coordinates across scroll/layout changes. Do not infer a measure from NOTE/REST pitch, duration, nearest DOM element or SVG selector. A renderer MISS remains a MISS and must not be replaced by consumer proximity guessing.
+
+SES-38 does not implement Student App `ScoreFollowIndex`, `PlaybackPlan`, `playMeasureOnce` or automatic follow highlighting; those remain the later SES-27 consumer integration stage.

@@ -138,3 +138,27 @@ For architecture changes, review should confirm:
 4. claims of support have code/test evidence;
 5. unsupported/out-of-scope systems are not silently represented as renderer components;
 6. `npm run check`, `npm run test:browser`, `npm run test:webkit` and `npm run test:headless` remain green.
+
+
+## SES-38 deterministic measure hit-test coverage
+
+The SES-38 matrix adds explicit protection for:
+
+| Behavior | Evidence |
+| --- | --- |
+| note/rest point resolves containing measure | adapter unit + browser interaction fixture |
+| genuine measure whitespace resolves containing measure | adapter unit + Chromium/WebKit interaction fixture |
+| outside graphical measure remains MISS | adapter unit + browser fixture |
+| same-target multi-staff overlap deduplicates | adapter unit |
+| different target overlap abstains | adapter unit |
+| malformed/non-finite coordinates reject | adapter/browser-host/runtime tests |
+| missing/ambiguous page mapping fails closed | adapter unit |
+| page identity does not depend on SVG DOM order | two-page unit harness with distinct transforms |
+| replacement render invalidates old geometry/evidence | adapter + browser-host epoch tests |
+| current `renderEpoch` and bounded `sourceId` attach at host boundary | browser-host tests |
+| scroll uses fresh coordinates/live transform | Chromium/WebKit fixture |
+| `pageMode: "page"` page 1 and page 2 resolve through their own SVG pages | multi-page Chromium fixture and pinned WebKit path |
+| existing NOTE/REST behavior does not regress | existing interaction/rendered-event suites |
+| generated runtime bridge remains bounded and integrity-checked | runtime export tests |
+
+Exact-head completion requires `npm run check`, `npm run test:browser`, `npm run test:webkit` and `npm run test:headless` to pass. WebKit remains engine evidence, not physical Safari acceptance.

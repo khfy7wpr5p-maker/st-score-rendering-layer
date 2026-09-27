@@ -112,3 +112,18 @@ PR-E introduces **no dependency change**:
 R0–R8 and SRL-EB stage labels are evidence/program identifiers, not version numbers. They must not substitute for package versions, runtime contract values or immutable renderer source revisions.
 
 See [PUBLIC-API.md](PUBLIC-API.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
+
+
+## SES-38 measure hit-test compatibility decision
+
+SES-38 keeps `SCORE_RENDERER_CONTRACT_VERSION` at `0.2.0`.
+
+Reason:
+
+- the base `ScoreRenderer` interface is unchanged;
+- existing NOTE/REST hit-test semantics are unchanged;
+- `hitTestMeasureDetailed` is an additive concrete adapter/browser-host/runtime extension;
+- the new `{ partId, measureIndex }` value is presentation identity, not a canonical-score authority change;
+- no runtime dependency or vendor-version change is introduced.
+
+Historical `0.2.0` artifacts may not contain this additive method. A consumer that requires measure targeting must feature-detect `hitTestMeasureDetailed` and pin/verify an exact renderer source revision/runtime manifest.

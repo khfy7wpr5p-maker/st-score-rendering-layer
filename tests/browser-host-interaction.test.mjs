@@ -24,6 +24,9 @@ function createRenderer(overrides = {}) {
     async exportSvg() { return ["<svg></svg>"]; },
     resolveNoteAtClientPoint() { return target; },
     resolveNoteAtClientPointDetailed() { return Object.freeze({ kind: "HIT", target }); },
+    resolveMeasureAtClientPointDetailed() {
+      return Object.freeze({ kind: "HIT", target: Object.freeze({ partId: "P1", measureIndex: 0 }) });
+    },
     async highlight(value) { calls.highlights.push(value); },
     async clearHighlights() { calls.clearHighlights += 1; },
     async moveCursor() {},
@@ -226,4 +229,165 @@ test("BrowserScoreHost interaction rejects malformed coordinates, render-in-flig
     () => host.clearHighlights(),
     /disposed/,
   );
+});
+
+
+test("BrowserScoreHost measure hit-test binds valid HIT and MISS evidence to the active render epoch", async () => {
+  const container = createContainer();
+  let measureResult = Object.freeze({
+    kind: "HIT",
+    target: Object.freeze({ partId: "P1", measureIndex: 3 }),
+  });
+  const { renderer } = createRenderer({
+    resolveMeasureAtClientPointDetailed() { return measureResult; },
+  });
+  const host = new BrowserScoreHost(container, {
+    expectedContractVersion: "0.2.0",
+    rendererFactory: () => renderer,
+  });
+
+  const firstRender = await host.renderMusicXml("<score-partwise/>", {}, "score-A");
+  assert.deepEqual(host.hitTestMeasureDetailed({ clientX: 10, clientY: 20 }), {
+    kind: "HIT",
+    renderEpoch: firstRender.renderEpoch,
+    sourceId: "score-A",
+    target: { partId: "P1", measureIndex: 3 },
+  });
+
+  for (const reason of [
+    "NO_ELEMENT_AT_POINT",
+    "OUTSIDE_RENDER_CONTAINER",
+    "UNMAPPED_ELEMENT",
+    "NO_MEASURE_OWNER",
+    "AMBIGUOUS_OWNERSHIP",
+    "MEASURE_GEOMETRY_UNAVAILABLE",
+  ]) {
+    measureResult = Object.freeze({ kind: "MISS", reason });
+    assert.deepEqual(host.hitTestMeasureDetailed({ clientX: 10, clientY: 20 }), {
+      kind: "MISS",
+      renderEpoch: firstRender.renderEpoch,
+      sourceId: "score-A",
+      reason,
+    });
+  }
+});
+
+test("BrowserScoreHost measure hit-test strictly normalizes renderer payloads", async () => {
+  const malformedCases = [
+    {
+      value: { kind: "HIT", target: { partId: "P1", measureIndex: 0 }, leakedDom: {} },
+      message: /unsupported field 'leakedDom'/,
+    },
+    {
+      value: { kind: "HIT", target: { partId: " P1", measureIndex: 0 } },
+      message: /partId.*bounded string/i,
+    },
+    {
+      value: { kind: "HIT", target: { partId: "P1", measureIndex: -1 } },
+      message: /measureIndex.*non-negative safe integer/i,
+    },
+    {
+      value: { kind: "MISS", reason: "NEAREST_MEASURE" },
+      message: /unsupported miss reason/i,
+    },
+  ];
+
+  for (const { value, message } of malformedCases) {
+    const container = createContainer();
+    const { renderer } = createRenderer({
+      resolveMeasureAtClientPointDetailed() { return value; },
+    });
+    const host = new BrowserScoreHost(container, {
+      expectedContractVersion: "0.2.0",
+      rendererFactory: () => renderer,
+    });
+    await host.renderMusicXml("<score-partwise/>");
+    assert.throws(
+      () => host.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
+      message,
+    );
+  }
+});
+
+test("BrowserScoreHost measure hit-test fails closed before render, during render, without capability and after dispose", async () => {
+  const beforeContainer = createContainer();
+  const { renderer: beforeRenderer } = createRenderer();
+  const beforeHost = new BrowserScoreHost(beforeContainer, {
+    expectedContractVersion: "0.2.0",
+    rendererFactory: () => beforeRenderer,
+  });
+  assert.throws(
+    () => beforeHost.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
+    BrowserScoreHostUnavailableError,
+  );
+
+  let releaseLoad;
+  const loadGate = new Promise((resolve) => { releaseLoad = resolve; });
+  const inFlightContainer = createContainer();
+  const { renderer: inFlightRenderer } = createRenderer({ async load() { await loadGate; } });
+  const inFlightHost = new BrowserScoreHost(inFlightContainer, {
+    expectedContractVersion: "0.2.0",
+    rendererFactory: () => inFlightRenderer,
+  });
+  const renderPromise = inFlightHost.renderMusicXml("<score-partwise/>");
+  assert.throws(
+    () => inFlightHost.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
+    /unavailable while rendering is in progress/,
+  );
+  releaseLoad();
+  await renderPromise;
+
+  const noCapabilityContainer = createContainer();
+  const { renderer: noCapabilityRenderer } = createRenderer();
+  delete noCapabilityRenderer.resolveMeasureAtClientPointDetailed;
+  const noCapabilityHost = new BrowserScoreHost(noCapabilityContainer, {
+    expectedContractVersion: "0.2.0",
+    rendererFactory: () => noCapabilityRenderer,
+  });
+  await noCapabilityHost.renderMusicXml("<score-partwise/>");
+  assert.throws(
+    () => noCapabilityHost.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
+    /measure hit-test capability/,
+  );
+
+  assert.throws(
+    () => inFlightHost.hitTestMeasureDetailed({ clientX: Number.NaN, clientY: 1 }),
+    /finite numbers/,
+  );
+  await inFlightHost.dispose();
+  assert.throws(
+    () => inFlightHost.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
+    /disposed/,
+  );
+});
+
+test("BrowserScoreHost measure evidence advances with replacement render epochs", async () => {
+  const container = createContainer();
+  let sourceId = null;
+  const { renderer } = createRenderer({
+    async load(source) { sourceId = source.sourceId ?? null; },
+    resolveMeasureAtClientPointDetailed() {
+      return sourceId === "score-B"
+        ? Object.freeze({ kind: "MISS", reason: "NO_MEASURE_OWNER" })
+        : Object.freeze({ kind: "HIT", target: { partId: "P1", measureIndex: 0 } });
+    },
+  });
+  const host = new BrowserScoreHost(container, {
+    expectedContractVersion: "0.2.0",
+    rendererFactory: () => renderer,
+  });
+
+  const firstRender = await host.renderMusicXml("<score-partwise/>", {}, "score-A");
+  const firstEvidence = host.hitTestMeasureDetailed({ clientX: 1, clientY: 1 });
+  assert.equal(firstEvidence.renderEpoch, firstRender.renderEpoch);
+
+  const secondRender = await host.renderMusicXml("<score-partwise version=\"4.0\"/>", {}, "score-B");
+  assert.notEqual(secondRender.renderEpoch, firstRender.renderEpoch);
+  assert.notEqual(firstEvidence.renderEpoch, secondRender.renderEpoch);
+  assert.deepEqual(host.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }), {
+    kind: "MISS",
+    renderEpoch: secondRender.renderEpoch,
+    sourceId: "score-B",
+    reason: "NO_MEASURE_OWNER",
+  });
 });

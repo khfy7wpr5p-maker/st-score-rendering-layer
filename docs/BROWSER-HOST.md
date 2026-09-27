@@ -239,3 +239,16 @@ Key protection includes:
 - `tests/workstation-runtime-*.test.mjs`: Workstation runtime export/cursor contract.
 
 Physical Safari browser chrome, safe-area, gesture/touch delivery and consumer-shell lifecycle remain external target-device acceptance concerns.
+
+
+## Measure hit-test evidence
+
+`BrowserScoreHost.hitTestMeasureDetailed({ clientX, clientY })` is an additive revision-specific extension. It validates finite fresh client coordinates, feature-detects the adapter extension, normalizes the adapter result as a strict plain object, and binds the result to the active `renderEpoch` plus optional bounded `sourceId`.
+
+HIT target shape:
+
+```ts
+Readonly<{ partId: string; measureIndex: number }>
+```
+
+The host never exposes OSMD objects, SVG nodes, page objects or bounding boxes. Replacement render advances the epoch; retained evidence from a previous render must be treated as stale by the consumer. The host does not own pointer/touch listeners, canonical score resolution or playback.

@@ -179,3 +179,18 @@ See [SESLITAB-DIAGNOSTIC-HANDOFF.md](SESLITAB-DIAGNOSTIC-HANDOFF.md) and [EDITOR
 Private package version `0.1.0` and runtime contract `0.2.0` intentionally coexist. The detailed hit/render-epoch APIs are additive revision-specific extensions; consumers requiring them must feature-detect and pin/verify an exact renderer revision/runtime manifest rather than inferring availability from `0.2.0` alone.
 
 See [VERSIONING.md](VERSIONING.md).
+
+
+## Deterministic measure hit-test extension (SES-38)
+
+Revision-pinned browser consumers may feature-detect the additive measure-targeting extension:
+
+```ts
+hitTestMeasureDetailed({ clientX, clientY })
+```
+
+A HIT returns current presentation evidence plus the renderer locator `{ partId, measureIndex }`. A MISS returns the same current `renderEpoch`/optional bounded `sourceId` evidence plus a bounded reason. The target is presentation identity only; it is not canonical score identity and does not authorize playback or source mutation.
+
+“Tap anywhere in a measure” means the exact current OSMD `GraphicalMeasure.PositionAndShape` border rectangle for the rendered staff region. Noteheads, rests and genuine measure whitespace inside that rectangle are eligible. Page margins, inter-system whitespace and nearby SVG content are not assigned by proximity.
+
+The implementation is fail-closed: conflicting different measure owners, missing/untrusted geometry, missing/ambiguous page identity, malformed coordinates and renderer-outside points do not guess a measure. Existing NOTE/REST hit-test APIs keep their previous semantics.

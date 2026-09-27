@@ -211,3 +211,20 @@ Consumers requiring `hitTestNoteDetailed()` must feature-detect it and pin/verif
 - `tests/browser/osmd-note-interaction-fixture.html`: real OSMD interaction at 720px/320px, scroll, rerender and re-highlight;
 - `tests/browser/osmd-chord-notehead-research-fixture.html`: chord notehead identity evidence;
 - `tests/webkit/run-osmd-webkit-fixture.mjs`: exact-pinned WebKit engine evidence for bounded rendering and note interaction.
+
+
+## Measure interaction (SES-38)
+
+Measure hit-testing is separate from NOTE/REST ownership. It uses renderer-owned graphical measure geometry rather than note identity, pitch, duration or nearest-distance inference.
+
+For the current render, the adapter indexes validated `GraphicalMeasure.PositionAndShape` border rectangles by `partId + measureIndex + graphical page`. At hit time, fresh `clientX/clientY` coordinates are projected through the matching live renderer-owned SVG page transform. OSMD 2.1.2 creates SVG ids from the graphical page number (`osmdSvgPage<PageNumber>`); the implementation requires a unique current page match and never uses SVG DOM order or guessed 0/1-based arithmetic.
+
+Ownership rules:
+
+- zero containing regions → `NO_MEASURE_OWNER`;
+- one unique `partId + measureIndex` → HIT;
+- overlapping physical staff regions for the same target deduplicate to one HIT;
+- overlapping regions for different targets → `AMBIGUOUS_OWNERSHIP`;
+- missing/duplicate/untrusted page mapping or transform → `MEASURE_GEOMETRY_UNAVAILABLE`.
+
+There is no arbitrary hit radius, nearest-measure fallback, z-order tie-break, pitch/duration inference or consumer-side SVG scraping.

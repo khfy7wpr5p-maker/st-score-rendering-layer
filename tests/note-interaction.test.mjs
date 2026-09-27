@@ -365,3 +365,276 @@ test("rerender drops stale DOM hit-test ownership", async () => {
   harness.hit(freshElement);
   assert.deepEqual(harness.renderer.resolveNoteAtClientPoint({ clientX: 1, clientY: 1 }), { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 });
 });
+
+
+function createMeasureHitHarness({
+  duplicatePageId = false,
+  unavailableTransform = false,
+  overlappingDifferentParts = false,
+  sameTargetMultiStaff = false,
+} = {}) {
+  let hitElement = null;
+  const styleNodes = [];
+  const container = createElement("measure-container");
+  const makeSvgPage = (pageNumber, offsetX) => {
+    const svg = createElement(`osmd-svg-page-${pageNumber}`, container);
+    svg.id = `osmdSvgPage${pageNumber}`;
+    svg.outerHTML = `<svg id="${svg.id}"></svg>`;
+    if (!unavailableTransform) {
+      svg.getScreenCTM = () => ({
+        inverse() {
+          return Object.freeze({ offsetX });
+        },
+      });
+      svg.createSVGPoint = () => ({
+        x: 0,
+        y: 0,
+        matrixTransform(matrix) {
+          return { x: this.x - matrix.offsetX, y: this.y };
+        },
+      });
+    }
+    return svg;
+  };
+
+  const page1 = makeSvgPage(1, 0);
+  const page2 = makeSvgPage(2, 1000);
+  const duplicatePage1 = duplicatePageId ? makeSvgPage(1, 500) : null;
+  const page1Note = createElement("page1-note", page1);
+  const page1Rest = createElement("page1-rest", page1);
+  const page1Whitespace = createElement("page1-whitespace", page1);
+  const page2Whitespace = createElement("page2-whitespace", page2);
+  const outside = createElement("outside-measure-renderer", null);
+
+  const allSvgPages = duplicatePage1 === null
+    ? [page2, page1]
+    : [page2, duplicatePage1, page1];
+
+  const document = {
+    defaultView: { Element: Object },
+    elementFromPoint() { return hitElement; },
+    elementsFromPoint() { return hitElement === null ? [] : [hitElement]; },
+    createElement() {
+      const attrs = new Map();
+      return {
+        textContent: "",
+        setAttribute(name, value) { attrs.set(name, value); },
+        getAttribute(name) { return attrs.get(name) ?? null; },
+      };
+    },
+  };
+  container.ownerDocument = document;
+  for (const page of allSvgPages) page.ownerDocument = document;
+  for (const element of [page1Note, page1Rest, page1Whitespace, page2Whitespace, outside]) {
+    element.ownerDocument = document;
+  }
+  container.querySelector = (selector) => selector === "style[data-st-score-highlight-style]" ? styleNodes[0] ?? null : null;
+  container.querySelectorAll = (selector) => {
+    if (selector === "svg") return allSvgPages;
+    const match = /^\[id="(osmdSvgPage-?\d+)"\]$/.exec(selector);
+    if (match) return allSvgPages.filter((page) => page.id === match[1]);
+    return [];
+  };
+  container.prepend = (node) => styleNodes.unshift(node);
+  container.replaceChildren = () => {};
+
+  const measureBox = (pageNumber, left = 10, right = 20) => ({
+    staffEntries: [],
+    PositionAndShape: {
+      AbsolutePosition: { x: 0, y: 0 },
+      BorderLeft: left,
+      BorderRight: right,
+      BorderTop: 5,
+      BorderBottom: 15,
+    },
+    ParentMusicSystem: { Parent: { PageNumber: pageNumber } },
+  });
+
+  const page1Primary = measureBox(1);
+  const page1SecondStaff = sameTargetMultiStaff ? measureBox(1) : undefined;
+  const page2Primary = measureBox(2);
+  const overlappingOtherPart = overlappingDifferentParts ? measureBox(1) : undefined;
+
+  const instruments = [
+    {
+      IdString: "P1",
+      Visible: true,
+      Staves: sameTargetMultiStaff
+        ? [{ idInMusicSheet: 0 }, { idInMusicSheet: 1 }]
+        : [{ idInMusicSheet: 0 }],
+    },
+  ];
+  if (overlappingDifferentParts) {
+    instruments.push({ IdString: "P2", Visible: true, Staves: [{ idInMusicSheet: 1 }] });
+  }
+
+  const measure0 = [page1Primary];
+  if (sameTargetMultiStaff) measure0[1] = page1SecondStaff;
+  if (overlappingDifferentParts) measure0[1] = overlappingOtherPart;
+
+  const engine = {
+    Sheet: {
+      Instruments: instruments,
+      SourceMeasures: [{}, {}],
+    },
+    graphic: {
+      measureList: [
+        measure0,
+        [page2Primary],
+      ],
+    },
+    async load() {},
+    setOptions() {},
+    render() {},
+    updateGraphic() {},
+  };
+
+  const renderer = new OsmdRenderer(container, () => engine);
+  return {
+    renderer,
+    engine,
+    elements: { page1Note, page1Rest, page1Whitespace, page2Whitespace, outside, page1, page2 },
+    hit(element) { hitElement = element; },
+    setPage1Bounds(left, right) {
+      page1Primary.PositionAndShape.BorderLeft = left;
+      page1Primary.PositionAndShape.BorderRight = right;
+      if (page1SecondStaff) {
+        page1SecondStaff.PositionAndShape.BorderLeft = left;
+        page1SecondStaff.PositionAndShape.BorderRight = right;
+      }
+    },
+  };
+}
+
+async function renderMeasureHarness(harness) {
+  await harness.renderer.load({ kind: "musicxml", content: "<score-partwise/>" });
+  await harness.renderer.render({ autoResize: false, pageMode: "page" });
+}
+
+test("measure hit-test resolves note, rest and true measure whitespace to the containing measure", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+  for (const element of [harness.elements.page1Note, harness.elements.page1Rest, harness.elements.page1Whitespace]) {
+    harness.hit(element);
+    assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+      kind: "HIT",
+      target: { partId: "P1", measureIndex: 0 },
+    });
+  }
+});
+
+test("measure hit-test maps each PageNumber only through its matching renderer-owned SVG transform", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+
+  harness.hit(harness.elements.page1Whitespace);
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 0 },
+  });
+
+  harness.hit(harness.elements.page2Whitespace);
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 1150, clientY: 100 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 1 },
+  });
+
+  harness.hit(harness.elements.page2Whitespace);
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "MISS",
+    reason: "NO_MEASURE_OWNER",
+  });
+});
+
+test("measure hit-test does not depend on SVG DOM order and fails closed on duplicate page identity", async () => {
+  const normal = createMeasureHitHarness();
+  await renderMeasureHarness(normal);
+  normal.hit(normal.elements.page1Whitespace);
+  assert.deepEqual(normal.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 0 },
+  });
+
+  const duplicate = createMeasureHitHarness({ duplicatePageId: true });
+  await renderMeasureHarness(duplicate);
+  duplicate.hit(duplicate.elements.page1Whitespace);
+  assert.deepEqual(duplicate.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "MISS",
+    reason: "MEASURE_GEOMETRY_UNAVAILABLE",
+  });
+});
+
+test("measure hit-test returns NO_MEASURE_OWNER outside graphical measure borders", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+  harness.hit(harness.elements.page1Whitespace);
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 250, clientY: 100 }), {
+    kind: "MISS",
+    reason: "NO_MEASURE_OWNER",
+  });
+});
+
+test("measure hit-test deduplicates same-target multi-staff overlap and abstains on different targets", async () => {
+  const sameTarget = createMeasureHitHarness({ sameTargetMultiStaff: true });
+  await renderMeasureHarness(sameTarget);
+  sameTarget.hit(sameTarget.elements.page1Whitespace);
+  assert.deepEqual(sameTarget.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 0 },
+  });
+
+  const ambiguous = createMeasureHitHarness({ overlappingDifferentParts: true });
+  await renderMeasureHarness(ambiguous);
+  ambiguous.hit(ambiguous.elements.page1Whitespace);
+  assert.deepEqual(ambiguous.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "MISS",
+    reason: "AMBIGUOUS_OWNERSHIP",
+  });
+});
+
+test("measure hit-test fails closed when live SVG projection is unavailable", async () => {
+  const harness = createMeasureHitHarness({ unavailableTransform: true });
+  await renderMeasureHarness(harness);
+  harness.hit(harness.elements.page1Whitespace);
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "MISS",
+    reason: "MEASURE_GEOMETRY_UNAVAILABLE",
+  });
+});
+
+test("measure hit-test rejects non-finite coordinates", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+  harness.hit(harness.elements.page1Whitespace);
+  assert.throws(
+    () => harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: Number.NaN, clientY: 0 }),
+    /finite number/,
+  );
+  assert.throws(
+    () => harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 0, clientY: Number.POSITIVE_INFINITY }),
+    /finite number/,
+  );
+});
+
+test("rerender rebuilds measure geometry instead of retaining stale regions", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+  harness.hit(harness.elements.page1Whitespace);
+  assert.equal(
+    harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }).kind,
+    "HIT",
+  );
+
+  harness.setPage1Bounds(30, 40);
+  await harness.renderer.render({ autoResize: false, pageMode: "page" });
+
+  harness.hit(harness.elements.page1Whitespace);
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 150, clientY: 100 }), {
+    kind: "MISS",
+    reason: "NO_MEASURE_OWNER",
+  });
+  assert.deepEqual(harness.renderer.resolveMeasureAtClientPointDetailed({ clientX: 350, clientY: 100 }), {
+    kind: "HIT",
+    target: { partId: "P1", measureIndex: 0 },
+  });
+});
