@@ -39,8 +39,13 @@ function sameRef(a,b){return a?.partId===b.partId&&a?.measureIndex===b.measureIn
 function sameMeasureRef(a,b){return a?.partId===b.partId&&a?.measureIndex===b.measureIndex}
 function exactMeasureEvidence(host,point,expected){const result=host.hitTestMeasureDetailed(point);return result.kind==="HIT"&&sameMeasureRef(result.target,expected)?result:null}
 function requireMeasureEvidence(host,point,expected,renderEpoch,sourceId){
-  const evidence=exactMeasureEvidence(host,point,expected);
-  if(!evidence)throw new Error(`measure hit did not resolve ${JSON.stringify(expected)}`);
+  const result=host.hitTestMeasureDetailed(point);
+  const evidence=result.kind==="HIT"&&sameMeasureRef(result.target,expected)?result:null;
+  if(!evidence){
+    const landed=document.elementFromPoint(point.clientX,point.clientY);
+    const svg=landed instanceof Element?landed.closest("svg"):null;
+    throw new Error(`measure hit did not resolve ${JSON.stringify(expected)}; actual=${JSON.stringify(result)}; point=${JSON.stringify(point)}; svg=${svg?.id??"none"}; viewBox=${svg?.getAttribute("viewBox")??"none"}; rect=${svg?JSON.stringify(svg.getBoundingClientRect().toJSON?.()??{left:svg.getBoundingClientRect().left,top:svg.getBoundingClientRect().top,width:svg.getBoundingClientRect().width,height:svg.getBoundingClientRect().height}):"none"}`);
+  }
   if(evidence.renderEpoch!==renderEpoch)throw new Error("measure hit epoch does not match active render");
   if(sourceId!==undefined&&evidence.sourceId!==sourceId)throw new Error("measure hit sourceId drift");
   return evidence;
