@@ -27,6 +27,7 @@
 
 ## Review Focus
 
+- **Multi-page PageNumber ↔ SVG-page identity:** a measure must use the exact current SVG page corresponding to its OSMD graphical page. Implementation must prove the mapping rule from pinned OSMD 2.1.2 source plus tests; no DOM-order assumption, no raw 0/1-based index arithmetic, and no fallback to another page. If a unique mapping cannot be established, return `MEASURE_GEOMETRY_UNAVAILABLE`. Add this to Task 1 unit coverage and Task 4 real-browser coverage.
 - **SVG transform unavailable or non-invertible:** measure hit-test must return `MEASURE_GEOMETRY_UNAVAILABLE`/fail closed and never invent a target. Add this to Task 1 unit coverage.
 - **A point lies inside two physical staff regions that map to the same `partId + measureIndex`:** deduplicate to one HIT, not ambiguity. Add this to Task 1 unit coverage.
 - **A point lies inside overlapping regions for different part/measure targets:** return `AMBIGUOUS_OWNERSHIP` with no tie-breaker. Add this to Task 1 unit coverage.
@@ -49,7 +50,23 @@
   - `OsmdMeasureHitDetailedResult`
   - `OsmdRenderer.resolveMeasureAtClientPointDetailed(point: OsmdClientPoint): OsmdMeasureHitDetailedResult`
 
-- [ ] **Step 1: Extend the unit-test harness with graphical measure geometry and owned SVG page stubs**
+- [ ] **Step 1: Fresh-read and pin the exact OSMD 2.1.2 page-identity rule before implementation**
+
+Inspect the exact pinned OSMD 2.1.2 sources that create graphical pages and SVG/page containers, including the backend/page initialization path. Record the specific evidence used by the implementation.
+
+Required conclusion format before code:
+
+```text
+GRAPHICAL PAGE ID SOURCE: <exact OSMD 2.1.2 property/path>
+OWNED SVG PAGE ID SOURCE: <exact renderer-owned DOM/backend property/path>
+MAPPING RULE: <exact deterministic rule proven by source>
+DOM ORDER REQUIRED: NO
+ZERO/ONE-BASED INDEX ASSUMPTION: NO
+```
+
+Do not implement `svgIndex = PageNumber`, `querySelectorAll("svg")[PageNumber]`, `PageNumber - 1`, or any equivalent shortcut unless that exact relation is independently proven by pinned source and then protected by the two-page tests below. Prefer an explicit current-page identity relation. If source evidence does not support a unique current mapping, design the runtime behavior to return `MEASURE_GEOMETRY_UNAVAILABLE`.
+
+- [ ] **Step 2: Extend the unit-test harness with graphical measure geometry and two renderer-owned SVG page stubs**
 
 Add deterministic stubs sufficient to model:
 
@@ -62,13 +79,15 @@ PositionAndShape: {
   BorderBottom,
 }
 ParentMusicSystem: {
-  Parent: { PageNumber: 1 }
+  Parent: { PageNumber: pageNumber }
 }
 ```
 
-The harness must also provide a renderer-owned SVG page whose live client→SVG conversion can be controlled by the test. Keep existing note/rest tests unchanged.
+The harness must provide **at least two renderer-owned SVG pages** and at least two distinct OSMD `PageNumber` values. Give page A and page B deliberately different live client→SVG transforms so an accidental page swap cannot still pass. The harness must expose page identity independently from DOM collection order; tests may deliberately reverse DOM order.
 
-- [ ] **Step 2: Write failing adapter tests for exact measure ownership**
+Keep existing note/rest tests unchanged.
+
+- [ ] **Step 3: Write failing adapter tests for exact measure ownership**
 
 Add focused tests named for these behaviors:
 
@@ -79,6 +98,9 @@ measure hit-test deduplicates same-target multi-staff overlap
 measure hit-test fails closed on different-target overlap
 measure hit-test rejects non-finite coordinates
 measure hit-test fails closed when SVG projection or measure geometry is unavailable
+measure hit-test maps page A only through page A transform and page B only through page B transform
+measure hit-test fails closed when unique PageNumber to owned SVG-page mapping cannot be established
+measure hit-test does not depend on SVG DOM order or PageNumber index arithmetic
 rerender rebuilds measure ownership and drops stale geometry
 ```
 
@@ -98,7 +120,7 @@ assert.deepEqual(result, {
 
 Also assert that existing `resolveNoteAtClientPointDetailed()` behavior is unchanged for the same harness points.
 
-- [ ] **Step 3: Run the focused tests to verify RED**
+- [ ] **Step 4: Run the focused tests to verify RED**
 
 Run:
 
@@ -109,7 +131,7 @@ node --test --test-name-pattern="measure hit-test" tests/note-interaction.test.m
 
 Expected: FAIL because `resolveMeasureAtClientPointDetailed` and its geometry index do not exist.
 
-- [ ] **Step 4: Add the adapter result types and bounded internal geometry record**
+- [ ] **Step 5: Add the adapter result types and bounded internal geometry record**
 
 In `packages/adapter-osmd/src/index.ts`, add the exact public extension types from the spec:
 
@@ -134,7 +156,7 @@ export type OsmdMeasureHitDetailedResult =
 
 Use one private bounded region record containing only page identity, finite border coordinates, and the frozen target. Do not store DOM objects as canonical target identity.
 
-- [ ] **Step 5: Implement measure-index lifecycle**
+- [ ] **Step 6: Implement measure-index lifecycle**
 
 Add a private measure-region index and reset/rebuild it on the same lifecycle boundaries that already clear/rebuild note ownership:
 
@@ -164,7 +186,7 @@ Requirements:
 - enforce a finite maximum number of indexed graphical measure regions using a named constant;
 - if index trust is lost, mark measure geometry unavailable for this render instead of breaking note/rest interaction.
 
-- [ ] **Step 6: Implement live client→OSMD projection**
+- [ ] **Step 7: Implement live client→OSMD projection**
 
 Implement one private projection helper used only by measure hit-test:
 
@@ -177,13 +199,18 @@ Implement one private projection helper used only by measure hit-test:
 
 Required behavior:
 
+- resolve the current renderer-owned SVG page using only the exact mapping rule proven in Step 1;
+- require a **unique** current mapping for the requested OSMD `PageNumber`;
+- never use `querySelectorAll("svg")` ordering as page identity;
+- never infer 0-based/1-based conversion from `PageNumber`;
+- never fall back to the nearest/previous/next SVG page or another page's transform;
 - select only the current renderer-owned SVG for that indexed page;
 - use live SVG screen-coordinate conversion/inverse transform;
 - reject absent, non-invertible, or non-finite transforms;
 - convert SVG user units to OSMD units using `10` SVG units per OSMD unit for OSMD 2.1.2;
 - do not manually apply scroll offsets, `devicePixelRatio`, cached CSS rectangles, or guessed zoom.
 
-- [ ] **Step 7: Implement `resolveMeasureAtClientPointDetailed()`**
+- [ ] **Step 8: Implement `resolveMeasureAtClientPointDetailed()`**
 
 Signature:
 
@@ -199,17 +226,19 @@ Algorithm fixed by the spec:
 2. reject non-finite coordinates;
 3. `elementFromPoint` null → `NO_ELEMENT_AT_POINT`;
 4. top element outside renderer container → `OUTSIDE_RENDER_CONTAINER`;
-5. establish the current renderer-owned SVG page containing the top element; none → `UNMAPPED_ELEMENT`;
-6. unavailable/untrusted geometry or projection → `MEASURE_GEOMETRY_UNAVAILABLE`;
-7. collect exact containing regions on that page;
-8. deduplicate equal `partId + measureIndex`;
-9. zero → `NO_MEASURE_OWNER`;
-10. one → HIT;
-11. more than one different target → `AMBIGUOUS_OWNERSHIP`.
+5. establish the current renderer-owned SVG page containing the top element;
+6. verify that the page has one unique mapping to the indexed OSMD `PageNumber`; missing/duplicate/unproven mapping → `MEASURE_GEOMETRY_UNAVAILABLE`;
+7. if the top element is inside the renderer but cannot be associated with any owned SVG page → `UNMAPPED_ELEMENT`;
+8. unavailable/untrusted geometry or projection → `MEASURE_GEOMETRY_UNAVAILABLE`;
+9. collect exact containing regions on that page only;
+10. deduplicate equal `partId + measureIndex`;
+11. zero → `NO_MEASURE_OWNER`;
+12. one → HIT;
+13. more than one different target → `AMBIGUOUS_OWNERSHIP`.
 
 No z-order or nearest-region tie breaker.
 
-- [ ] **Step 8: Run focused and regression adapter tests**
+- [ ] **Step 9: Run focused and regression adapter tests**
 
 Run:
 
@@ -222,7 +251,7 @@ node --test tests/osmd-adapter.test.mjs
 
 Expected: PASS, including all existing NOTE/REST interaction tests.
 
-- [ ] **Step 9: Commit Task 1**
+- [ ] **Step 10: Commit Task 1**
 
 ```bash
 git add packages/adapter-osmd/src/index.ts tests/note-interaction.test.mjs
@@ -445,9 +474,21 @@ Required browser scenarios:
 320px: point outside graphical measure but inside SVG → NO_MEASURE_OWNER
 scroll after render: fresh client point still maps to the same current measure
 rerender: current measure geometry resolves and stale physical coordinates/owners are not reused
+pageMode "page": a score produces at least two renderer-owned SVG pages
+pageMode "page": a measure on page 1 resolves through page 1 only
+pageMode "page": a measure on page 2 resolves through page 2 only
+pageMode "page": after scrolling from page 1 to page 2, fresh client coordinates still resolve page 2 correctly
 ```
 
-The fixture must derive test points from real current rendered geometry/elements, not hard-code page-screen coordinates that accidentally pass one viewport.
+For the multi-page case:
+
+- render with `pageMode: "page"`;
+- use a MusicXML fixture that deterministically produces at least two SVG pages, and assert `svgPages.length >= 2` before testing hits;
+- derive points from real current rendered geometry/elements, not hard-coded viewport coordinates;
+- ensure page 1 and page 2 hits are both asserted in Chromium;
+- run the same multi-page scenario through the pinned WebKit fixture path when that fixture supports the same page-mode flow; if the existing path cannot support it, report that exact limitation rather than silently omitting it.
+
+The fixture must derive all test points from real current rendered geometry/elements, not hard-code page-screen coordinates that accidentally pass one viewport.
 
 - [ ] **Step 2: Run Chromium fixture**
 
@@ -460,6 +501,8 @@ npm run test:browser
 Expected before final GREEN: new measure assertions fail if Tasks 1–3 are incomplete; after implementation they PASS together with all existing fixtures.
 
 - [ ] **Step 3: Run pinned WebKit fixture**
+
+The WebKit run must include the two-page `pageMode: "page"` scenario when supported by the current shared fixture path, including page 1 hit, page 2 hit, and scroll-between-pages fresh-coordinate evidence.
 
 Run:
 
@@ -616,7 +659,13 @@ Confirm with source/diff inspection:
 - no pointer listener added;
 - runtime output originates from generator source;
 - detailed measure result exposes no DOM/OSMD/geometry object;
-- existing NOTE/REST test suites remain green.
+- existing NOTE/REST test suites remain green;
+- multi-page mapping is backed by fresh pinned OSMD 2.1.2 evidence and tests;
+- no raw `svgIndex = PageNumber` shortcut unless independently proven and pinned by explicit tests;
+- no `PageNumber - 1` / `PageNumber + 1` base conversion assumption;
+- no implicit `querySelectorAll("svg")` DOM-order dependency;
+- no fallback to another page's SVG transform when mapping is missing or ambiguous;
+- missing/duplicate/unproven page mapping returns `MEASURE_GEOMETRY_UNAVAILABLE`.
 
 - [ ] **Step 4: Perform independent whole-branch review**
 
