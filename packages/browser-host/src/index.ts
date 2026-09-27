@@ -64,6 +64,30 @@ export type BrowserRenderedEventHitMiss = Readonly<{
   reason: BrowserRenderedEventHitMissReason;
 }>;
 export type BrowserRenderedEventHitDetailedResult = BrowserRenderedEventHitEvidence | BrowserRenderedEventHitMiss;
+export type BrowserMeasureHitTargetRef = Readonly<{
+  partId: string;
+  measureIndex: number;
+}>;
+export type BrowserMeasureHitMissReason =
+  | "NO_ELEMENT_AT_POINT"
+  | "OUTSIDE_RENDER_CONTAINER"
+  | "UNMAPPED_ELEMENT"
+  | "NO_MEASURE_OWNER"
+  | "AMBIGUOUS_OWNERSHIP"
+  | "MEASURE_GEOMETRY_UNAVAILABLE";
+export type BrowserMeasureHitEvidence = Readonly<{
+  kind: "HIT";
+  renderEpoch: BrowserRenderEpoch;
+  sourceId?: string;
+  target: BrowserMeasureHitTargetRef;
+}>;
+export type BrowserMeasureHitMiss = Readonly<{
+  kind: "MISS";
+  renderEpoch: BrowserRenderEpoch;
+  sourceId?: string;
+  reason: BrowserMeasureHitMissReason;
+}>;
+export type BrowserMeasureHitDetailedResult = BrowserMeasureHitEvidence | BrowserMeasureHitMiss;
 
 type BrowserNoteHitTestRenderer = ScoreRenderer & Readonly<{
   resolveNoteAtClientPoint(point: BrowserNoteHitPoint): ScoreNoteRef | null;
@@ -73,6 +97,9 @@ type BrowserDetailedNoteHitTestRenderer = BrowserNoteHitTestRenderer & Readonly<
 }>;
 type BrowserDetailedRenderedEventHitTestRenderer = ScoreRenderer & Readonly<{
   resolveRenderedEventAtClientPointDetailed(point: BrowserNoteHitPoint): unknown;
+}>;
+type BrowserDetailedMeasureHitTestRenderer = ScoreRenderer & Readonly<{
+  resolveMeasureAtClientPointDetailed(point: BrowserNoteHitPoint): unknown;
 }>;
 
 export type BrowserScoreHostOptions = Readonly<{
@@ -117,6 +144,14 @@ const RENDERED_EVENT_HIT_MISS_REASONS: ReadonlySet<BrowserRenderedEventHitMissRe
   "UNSUPPORTED_TARGET",
 ]);
 const RENDERED_EVENT_TARGET_KINDS: ReadonlySet<BrowserRenderedEventTargetKind> = new Set(["NOTE", "REST"]);
+const MEASURE_HIT_MISS_REASONS: ReadonlySet<BrowserMeasureHitMissReason> = new Set([
+  "NO_ELEMENT_AT_POINT",
+  "OUTSIDE_RENDER_CONTAINER",
+  "UNMAPPED_ELEMENT",
+  "NO_MEASURE_OWNER",
+  "AMBIGUOUS_OWNERSHIP",
+  "MEASURE_GEOMETRY_UNAVAILABLE",
+]);
 
 function hasNoteHitTest(renderer: ScoreRenderer): renderer is BrowserNoteHitTestRenderer {
   return typeof (renderer as Partial<BrowserNoteHitTestRenderer>).resolveNoteAtClientPoint === "function";
@@ -129,6 +164,10 @@ function hasDetailedNoteHitTest(renderer: ScoreRenderer): renderer is BrowserDet
 
 function hasDetailedRenderedEventHitTest(renderer: ScoreRenderer): renderer is BrowserDetailedRenderedEventHitTestRenderer {
   return typeof (renderer as Partial<BrowserDetailedRenderedEventHitTestRenderer>).resolveRenderedEventAtClientPointDetailed === "function";
+}
+
+function hasDetailedMeasureHitTest(renderer: ScoreRenderer): renderer is BrowserDetailedMeasureHitTestRenderer {
+  return typeof (renderer as Partial<BrowserDetailedMeasureHitTestRenderer>).resolveMeasureAtClientPointDetailed === "function";
 }
 
 function requireFinitePoint(point: BrowserNoteHitPoint): void {
@@ -207,6 +246,43 @@ function normalizeRenderedEventTargetRef(value: unknown): BrowserRenderedEventTa
   return voice === undefined
     ? Object.freeze({ kind, partId, measureIndex: measureIndex as number, eventIndex: eventIndex as number })
     : Object.freeze({ kind, partId, measureIndex: measureIndex as number, eventIndex: eventIndex as number, voice: voice as number });
+}
+
+function normalizeMeasureHitTargetRef(value: unknown): BrowserMeasureHitTargetRef {
+  const target = requirePlainObject(value, "Detailed measure hit target");
+  requireAllowedKeys(target, new Set(["partId", "measureIndex"]), "Detailed measure hit target");
+  const partId = target.partId;
+  if (
+    typeof partId !== "string"
+    || partId.length === 0
+    || partId.length > NOTE_PART_ID_MAX_LENGTH
+    || partId !== partId.trim()
+  ) {
+    throw new TypeError("Detailed measure hit target partId must be a non-empty bounded string without surrounding whitespace.");
+  }
+  const measureIndex = target.measureIndex;
+  if (!Number.isSafeInteger(measureIndex) || (measureIndex as number) < 0) {
+    throw new RangeError("Detailed measure hit target measureIndex must be a non-negative safe integer.");
+  }
+  return Object.freeze({ partId, measureIndex: measureIndex as number });
+}
+
+function normalizeDetailedMeasureHit(value: unknown):
+  | Readonly<{ kind: "HIT"; target: BrowserMeasureHitTargetRef }>
+  | Readonly<{ kind: "MISS"; reason: BrowserMeasureHitMissReason }> {
+  const result = requirePlainObject(value, "Detailed measure hit result");
+  if (result.kind === "HIT") {
+    requireAllowedKeys(result, new Set(["kind", "target"]), "Detailed measure hit result");
+    return Object.freeze({ kind: "HIT", target: normalizeMeasureHitTargetRef(result.target) });
+  }
+  if (result.kind === "MISS") {
+    requireAllowedKeys(result, new Set(["kind", "reason"]), "Detailed measure hit result");
+    if (typeof result.reason !== "string" || !MEASURE_HIT_MISS_REASONS.has(result.reason as BrowserMeasureHitMissReason)) {
+      throw new TypeError("Detailed measure hit result contains an unsupported miss reason.");
+    }
+    return Object.freeze({ kind: "MISS", reason: result.reason as BrowserMeasureHitMissReason });
+  }
+  throw new TypeError("Detailed measure hit result kind must be HIT or MISS.");
 }
 
 function normalizeDetailedRendererHit(value: unknown):
@@ -391,6 +467,28 @@ export class BrowserScoreHost {
       throw new BrowserScoreHostUnavailableError("Detailed note hit-test requires an active render epoch.");
     }
     const result = normalizeDetailedRendererHit(renderer.resolveNoteAtClientPointDetailed(point));
+    const sourceId = this.#activeEvidenceSourceId;
+    if (result.kind === "HIT") {
+      return sourceId === undefined
+        ? Object.freeze({ kind: "HIT", renderEpoch, target: result.target })
+        : Object.freeze({ kind: "HIT", renderEpoch, sourceId, target: result.target });
+    }
+    return sourceId === undefined
+      ? Object.freeze({ kind: "MISS", renderEpoch, reason: result.reason })
+      : Object.freeze({ kind: "MISS", renderEpoch, sourceId, reason: result.reason });
+  }
+
+  hitTestMeasureDetailed(point: BrowserNoteHitPoint): BrowserMeasureHitDetailedResult {
+    requireFinitePoint(point);
+    const renderer = this.#requireRenderer("Detailed measure hit-test");
+    if (!hasDetailedMeasureHitTest(renderer)) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide detailed measure hit-test capability.");
+    }
+    const renderEpoch = this.#activeRenderEpoch;
+    if (renderEpoch === undefined) {
+      throw new BrowserScoreHostUnavailableError("Detailed measure hit-test requires an active render epoch.");
+    }
+    const result = normalizeDetailedMeasureHit(renderer.resolveMeasureAtClientPointDetailed(point));
     const sourceId = this.#activeEvidenceSourceId;
     if (result.kind === "HIT") {
       return sourceId === undefined
