@@ -54,6 +54,9 @@ test("runtime host exposes bounded cursor, legacy hit-test, detailed hit evidenc
     assert.match(bootstrap, /hitTestNoteDetailed\(payload\)/);
     assert.match(bootstrap, /activeHost\.hitTestNoteDetailed\(\{ clientX: point\.clientX, clientY: point\.clientY \}\)/);
     assert.match(bootstrap, /Detailed score note hit-test payload/);
+    assert.match(bootstrap, /hitTestMeasureDetailed\(payload\)/);
+    assert.match(bootstrap, /activeHost\.hitTestMeasureDetailed\(\{ clientX: point\.clientX, clientY: point\.clientY \}\)/);
+    assert.match(bootstrap, /Detailed score measure hit-test payload/);
     assert.match(bootstrap, /async highlight\(payload\)/);
     assert.match(bootstrap, /activeHost\.highlight/);
     assert.match(bootstrap, /async clearHighlights\(\)/);
