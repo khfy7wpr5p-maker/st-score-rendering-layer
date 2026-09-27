@@ -37,6 +37,9 @@ test("browser runtime is consumer-neutral and exposes bounded presentation inter
     assert.match(bootstrap, /hitTestNoteDetailed\(payload\)/);
     assert.match(bootstrap, /activeHost\.hitTestNoteDetailed/);
     assert.match(bootstrap, /Detailed score note hit-test payload/);
+    assert.match(bootstrap, /hitTestMeasureDetailed\(payload\)/);
+    assert.match(bootstrap, /activeHost\.hitTestMeasureDetailed/);
+    assert.match(bootstrap, /Detailed score measure hit-test payload/);
     assert.match(bootstrap, /async highlight\(payload\)/);
     assert.match(bootstrap, /activeHost\.highlight/);
     assert.match(bootstrap, /async clearHighlights\(\)/);
