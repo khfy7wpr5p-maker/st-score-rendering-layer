@@ -139,3 +139,12 @@ A consumer should verify on the actual host surface that:
 ## Architecture status
 
 Mobile note hit-testing is production-implemented through browser-generic deterministic DOM ownership. Repository automation covers Chromium and an exact-pinned Playwright WebKit engine for bounded renderer interaction evidence. Safari-specific host lifecycle, browser chrome, gesture and safe-area behavior remains a physical-device/consumer integration acceptance concern.
+
+
+## Measure hit-test mobile evidence
+
+SES-38 extends the same fresh-client-coordinate rule to measure targeting. The adapter uses the live SVG screen transform at hit time, so scrolling after render must be handled by current `clientX/clientY`; consumers must not add cached scroll offsets or `devicePixelRatio` corrections.
+
+Repository browser coverage includes 320px interaction evidence and multi-page page-mode checks. Chromium and pinned Playwright WebKit evidence demonstrate engine behavior, including page-to-page scrolling with fresh coordinates, but they are not a substitute for physical iPhone/Safari acceptance.
+
+If a unique current OSMD graphical-page ↔ renderer-owned SVG-page mapping cannot be established, measure targeting fails closed with `MEASURE_GEOMETRY_UNAVAILABLE` rather than selecting another page.
