@@ -23,6 +23,9 @@ function renderer({ failRender = false } = {}) {
     async exportSvg() { return ["<svg/>"]; },
     resolveNoteAtClientPoint() { return target; },
     resolveNoteAtClientPointDetailed() { return Object.freeze({ kind: "HIT", target }); },
+    resolveMeasureAtClientPointDetailed() {
+      return Object.freeze({ kind: "HIT", target: Object.freeze({ partId: "P1", measureIndex: 0 }) });
+    },
     async highlight() {},
     async clearHighlights() {},
     async moveCursor() {},
@@ -46,7 +49,9 @@ test("failed replacement invalidates prior detailed hit evidence and active epoc
 
   const firstRender = await host.renderMusicXml("<score-partwise/>", {}, "score-A");
   const staleEvidence = host.hitTestNoteDetailed({ clientX: 1, clientY: 1 });
+  const staleMeasureEvidence = host.hitTestMeasureDetailed({ clientX: 1, clientY: 1 });
   assert.equal(staleEvidence.renderEpoch, firstRender.renderEpoch);
+  assert.equal(staleMeasureEvidence.renderEpoch, firstRender.renderEpoch);
 
   await assert.rejects(
     () => host.renderMusicXml("<score-partwise version=\"4.0\"/>", {}, "score-B"),
@@ -54,6 +59,10 @@ test("failed replacement invalidates prior detailed hit evidence and active epoc
   );
   assert.throws(
     () => host.hitTestNoteDetailed({ clientX: 1, clientY: 1 }),
+    BrowserScoreHostUnavailableError,
+  );
+  assert.throws(
+    () => host.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
     BrowserScoreHostUnavailableError,
   );
 });
@@ -69,6 +78,10 @@ test("invalid replacement input and dispose invalidate current detailed hit acce
     () => host.hitTestNoteDetailed({ clientX: 1, clientY: 1 }),
     BrowserScoreHostUnavailableError,
   );
+  assert.throws(
+    () => host.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
+    BrowserScoreHostUnavailableError,
+  );
 
   const secondHost = new BrowserScoreHost(container(), {
     expectedContractVersion: "0.2.0",
@@ -78,6 +91,10 @@ test("invalid replacement input and dispose invalidate current detailed hit acce
   await secondHost.dispose();
   assert.throws(
     () => secondHost.hitTestNoteDetailed({ clientX: 1, clientY: 1 }),
+    /disposed/,
+  );
+  assert.throws(
+    () => secondHost.hitTestMeasureDetailed({ clientX: 1, clientY: 1 }),
     /disposed/,
   );
 });
