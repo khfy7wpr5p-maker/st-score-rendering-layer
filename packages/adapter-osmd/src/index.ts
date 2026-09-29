@@ -539,14 +539,18 @@ export class OsmdRenderer implements ScoreRenderer {
     }
   }
 
+  async clearMeasureHighlights(): Promise<void> {
+    for (const overlay of this.#measureHighlightOverlays) overlay.remove();
+    this.#measureHighlightOverlays.clear();
+  }
+
   async clearHighlights(): Promise<void> {
     for (const [element, className] of this.#highlighted) {
       element.classList.remove(className);
       element.removeAttribute("data-st-score-highlight");
     }
     this.#highlighted.clear();
-    for (const overlay of this.#measureHighlightOverlays) overlay.remove();
-    this.#measureHighlightOverlays.clear();
+    await this.clearMeasureHighlights();
   }
 
   async moveCursor(target: ScoreMeasureRef): Promise<void> {
