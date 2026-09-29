@@ -514,7 +514,6 @@ export class OsmdRenderer implements ScoreRenderer {
     const existing = this.#measureHighlighted.get(key);
     existing?.remove();
 
-    this.#ensureMeasureHighlightStyle();
     const group = this.#container.ownerDocument.createElementNS(SVG_NAMESPACE, "g");
     group.classList.add(className);
     group.setAttribute("data-st-score-measure-highlight", "true");
@@ -528,6 +527,10 @@ export class OsmdRenderer implements ScoreRenderer {
       rect.setAttribute("y", String(region.top * OSMD_SVG_UNITS_PER_UNIT));
       rect.setAttribute("width", String((region.right - region.left) * OSMD_SVG_UNITS_PER_UNIT));
       rect.setAttribute("height", String((region.bottom - region.top) * OSMD_SVG_UNITS_PER_UNIT));
+      rect.setAttribute("fill", "rgba(210, 0, 0, 0.08)");
+      rect.setAttribute("stroke", "#d00000");
+      rect.setAttribute("stroke-width", "2");
+      rect.setAttribute("vector-effect", "non-scaling-stroke");
       rect.setAttribute("pointer-events", "none");
       group.append(rect);
     }
@@ -999,15 +1002,6 @@ export class OsmdRenderer implements ScoreRenderer {
     const style = document.createElement("style");
     style.setAttribute("data-st-score-highlight-style", "true");
     style.textContent = '[data-st-score-highlight="true"] { fill: #ff8c00 !important; stroke: #ff8c00 !important; } [data-st-score-highlight="true"] * { fill: #ff8c00 !important; stroke: #ff8c00 !important; }';
-    this.#container.prepend(style);
-  }
-
-  #ensureMeasureHighlightStyle(): void {
-    if (this.#container.querySelector("style[data-st-score-measure-highlight-style]") !== null) return;
-    const document = this.#container.ownerDocument;
-    const style = document.createElement("style");
-    style.setAttribute("data-st-score-measure-highlight-style", "true");
-    style.textContent = '[data-st-score-measure-highlight="true"] > rect { fill: rgba(210, 0, 0, 0.08); stroke: #d00000; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }';
     this.#container.prepend(style);
   }
 }
