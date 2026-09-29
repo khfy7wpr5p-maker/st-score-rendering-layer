@@ -23,6 +23,7 @@ function createHarness() {
     cursorReset: 0, cursorShow: 0, nextMeasure: 0, updateGraphic: 0,
   };
   const noteElement = createDomElement();
+  noteElement.setAttribute("fill", "#111111");
   const note = {
     vfnoteIndex: 0,
     sourceNote: { isRest() { return false; } },
@@ -118,10 +119,14 @@ test("R4 highlight adds and clears a safe SVG marker without changing source col
   await renderer.highlight({ target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 } });
   assert.equal(noteElement.classList.contains("st-score-highlight"), true);
   assert.equal(noteElement.getAttribute("data-st-score-highlight"), "true");
-  assert.equal(calls.prepended, 1);
+  assert.equal(noteElement.getAttribute("fill"), "#ff8c00");
+  assert.equal(noteElement.getAttribute("stroke"), "#ff8c00");
+  assert.equal(calls.prepended, 0, "strict-CSP highlight must not inject a style element");
   await renderer.clearHighlights();
   assert.equal(noteElement.classList.contains("st-score-highlight"), false);
   assert.equal(noteElement.getAttribute("data-st-score-highlight"), null);
+  assert.equal(noteElement.getAttribute("fill"), "#111111");
+  assert.equal(noteElement.getAttribute("stroke"), null);
 });
 
 test("R4 highlight rejects unsafe class names and unresolved notes", async () => {
