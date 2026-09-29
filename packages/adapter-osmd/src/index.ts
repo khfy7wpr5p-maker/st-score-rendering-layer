@@ -97,6 +97,10 @@ export type OsmdMeasureHitMissReason =
 export type OsmdMeasureHitDetailedResult =
   | Readonly<{ kind: "HIT"; target: OsmdMeasureHitTargetRef }>
   | Readonly<{ kind: "MISS"; reason: OsmdMeasureHitMissReason }>;
+export type OsmdMeasureHighlight = Readonly<{
+  target: ScoreMeasureRef;
+  className?: string;
+}>;
 
 const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
   "musicxml-render",
@@ -107,7 +111,9 @@ const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
   "tablature",
 ]);
 const DEFAULT_HIGHLIGHT_CLASS = "st-score-highlight";
+const DEFAULT_MEASURE_HIGHLIGHT_CLASS = "st-score-suspicious-measure";
 const HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const MAX_HIT_TEST_NOTE_ELEMENTS = 200_000;
 const MAX_MEASURE_HIT_REGIONS = 100_000;
 const MEASURE_PART_ID_MAX_LENGTH = 128;
@@ -125,6 +131,8 @@ type IndexedGraphicalNote = Readonly<{
 }>;
 type HitTestOwner = ScoreNoteRef | typeof AMBIGUOUS_HIT_OWNER | typeof NO_NOTE_HIT_OWNER;
 type RenderedEventHitOwner = OsmdRenderedEventTargetRef | typeof AMBIGUOUS_HIT_OWNER;
+type HighlightPaintSnapshot = Readonly<{ element: Element; fill: string | null; stroke: string | null }>;
+type NoteHighlightState = Readonly<{ className: string; painted: readonly HighlightPaintSnapshot[] }>;
 type ElementOwnershipResult = Readonly<{
   insideContainer: boolean;
   target?: ScoreNoteRef;
@@ -252,7 +260,8 @@ export class OsmdRenderer implements ScoreRenderer {
   readonly capabilities = CAPABILITIES;
   readonly #container: HTMLElement;
   readonly #factory: OsmdFactory;
-  readonly #highlighted = new Map<Element, string>();
+  readonly #highlighted = new Map<Element, NoteHighlightState>();
+  readonly #measureHighlighted = new Map<string, Element>();
 
   #noteRefByElement: WeakMap<Element, HitTestOwner> = new WeakMap();
   #renderedEventRefByElement: WeakMap<Element, RenderedEventHitOwner> = new WeakMap();
@@ -270,6 +279,7 @@ export class OsmdRenderer implements ScoreRenderer {
   async load(source: ScoreSource): Promise<void> {
     validateScoreSource(source);
     await this.clearHighlights();
+    await this.clearMeasureHighlights();
     this.#resetHitTestIndex();
     const osmd = this.#ensureOsmd();
     await osmd.load(source.content);
@@ -280,6 +290,7 @@ export class OsmdRenderer implements ScoreRenderer {
   async render(options: ScoreRenderOptions = {}): Promise<ScoreRenderResult> {
     if (!this.#loaded) throw new Error("A MusicXML score must be loaded before render().");
     await this.clearHighlights();
+    await this.clearMeasureHighlights();
     this.#resetHitTestIndex();
     const osmd = this.#ensureOsmd();
     osmd.setOptions({
@@ -454,18 +465,94 @@ export class OsmdRenderer implements ScoreRenderer {
       throw new Error("Highlight className must be one safe CSS class token of at most 64 characters.");
     }
     const element = this.resolveRenderedNoteElement(highlight.target);
-    this.#ensureHighlightStyle();
+    const existing = this.#highlighted.get(element);
+    if (existing !== undefined) this.#restoreNoteHighlight(element, existing);
+    const descendants = typeof element.querySelectorAll === "function"
+      ? [...element.querySelectorAll("*")]
+      : [];
+    const painted = [element, ...descendants].map((target) => Object.freeze({
+      element: target,
+      fill: target.getAttribute("fill"),
+      stroke: target.getAttribute("stroke"),
+    }));
     element.classList.add(className);
     element.setAttribute("data-st-score-highlight", "true");
-    this.#highlighted.set(element, className);
+    for (const target of painted) {
+      target.element.setAttribute("fill", "#ff8c00");
+      target.element.setAttribute("stroke", "#ff8c00");
+    }
+    this.#highlighted.set(element, Object.freeze({ className, painted: Object.freeze(painted) }));
   }
 
   async clearHighlights(): Promise<void> {
-    for (const [element, className] of this.#highlighted) {
-      element.classList.remove(className);
-      element.removeAttribute("data-st-score-highlight");
-    }
+    for (const [element, state] of this.#highlighted) this.#restoreNoteHighlight(element, state);
     this.#highlighted.clear();
+  }
+
+  async highlightMeasure(highlight: OsmdMeasureHighlight): Promise<void> {
+    this.#requireRendered("highlightMeasure()");
+    requireNonNegativeInteger(highlight.target.measureIndex, "measureIndex");
+    const className = highlight.className ?? DEFAULT_MEASURE_HIGHLIGHT_CLASS;
+    if (!HIGHLIGHT_CLASS_PATTERN.test(className)) {
+      throw new Error("Measure highlight className must be one safe CSS class token of at most 64 characters.");
+    }
+    if (!isBoundedMeasurePartId(highlight.target.partId)) {
+      throw new Error("Measure highlight partId must be a non-empty bounded identifier.");
+    }
+    if (!this.#measureGeometryAvailable) {
+      throw new Error("Measure highlight geometry is unavailable for the current render.");
+    }
+
+    const regions = this.#measureHitRegions.filter((region) =>
+      sameMeasureHitTarget(region.target, highlight.target),
+    );
+    if (regions.length === 0) {
+      throw new Error("Measure highlight target is unavailable in the current render.");
+    }
+    const pageNumbers = [...new Set(regions.map((region) => region.pageNumber))];
+    if (pageNumbers.length !== 1) {
+      throw new Error("Measure highlight target maps ambiguously across rendered pages.");
+    }
+    const pageNumber = pageNumbers[0];
+    if (pageNumber === undefined) {
+      throw new Error("Measure highlight page identity is unavailable.");
+    }
+    const page = this.#resolveOwnedSvgPage(pageNumber);
+    if (page === undefined) {
+      throw new Error("Measure highlight page identity is unavailable in the current render.");
+    }
+
+    const key = this.#measureHighlightKey(highlight.target);
+    const existing = this.#measureHighlighted.get(key);
+    existing?.remove();
+
+    const group = this.#container.ownerDocument.createElementNS(SVG_NAMESPACE, "g");
+    group.classList.add(className);
+    group.setAttribute("data-st-score-measure-highlight", "true");
+    group.setAttribute("data-st-score-measure-part-id", highlight.target.partId);
+    group.setAttribute("data-st-score-measure-index", String(highlight.target.measureIndex));
+    group.setAttribute("pointer-events", "none");
+
+    for (const region of regions) {
+      const rect = this.#container.ownerDocument.createElementNS(SVG_NAMESPACE, "rect");
+      rect.setAttribute("x", String(region.left * OSMD_SVG_UNITS_PER_UNIT));
+      rect.setAttribute("y", String(region.top * OSMD_SVG_UNITS_PER_UNIT));
+      rect.setAttribute("width", String((region.right - region.left) * OSMD_SVG_UNITS_PER_UNIT));
+      rect.setAttribute("height", String((region.bottom - region.top) * OSMD_SVG_UNITS_PER_UNIT));
+      rect.setAttribute("fill", "rgba(210, 0, 0, 0.08)");
+      rect.setAttribute("stroke", "#d00000");
+      rect.setAttribute("stroke-width", "2");
+      rect.setAttribute("vector-effect", "non-scaling-stroke");
+      rect.setAttribute("pointer-events", "none");
+      group.append(rect);
+    }
+    page.append(group);
+    this.#measureHighlighted.set(key, group);
+  }
+
+  async clearMeasureHighlights(): Promise<void> {
+    for (const group of this.#measureHighlighted.values()) group.remove();
+    this.#measureHighlighted.clear();
   }
 
   async moveCursor(target: ScoreMeasureRef): Promise<void> {
@@ -501,6 +588,7 @@ export class OsmdRenderer implements ScoreRenderer {
     const osmd = this.#ensureOsmd();
     const instrument = this.#findInstrument(part.partId);
     await this.clearHighlights();
+    await this.clearMeasureHighlights();
     this.#resetHitTestIndex();
     instrument.Visible = visible;
     if (!osmd.updateGraphic) throw new Error("OSMD updateGraphic() is unavailable for part visibility changes.");
@@ -518,6 +606,7 @@ export class OsmdRenderer implements ScoreRenderer {
 
   async dispose(): Promise<void> {
     await this.clearHighlights();
+    await this.clearMeasureHighlights();
     this.#resetHitTestIndex();
     this.#container.replaceChildren();
     this.#osmd = undefined;
@@ -908,6 +997,10 @@ export class OsmdRenderer implements ScoreRenderer {
     this.#renderedEventRefByElement.set(element, AMBIGUOUS_HIT_OWNER);
   }
 
+  #measureHighlightKey(target: ScoreMeasureRef): string {
+    return `${target.partId}\u0000${target.measureIndex}`;
+  }
+
   #resetHitTestIndex(): void {
     this.#noteRefByElement = new WeakMap();
     this.#renderedEventRefByElement = new WeakMap();
@@ -915,12 +1008,14 @@ export class OsmdRenderer implements ScoreRenderer {
     this.#measureGeometryAvailable = false;
   }
 
-  #ensureHighlightStyle(): void {
-    if (this.#container.querySelector("style[data-st-score-highlight-style]") !== null) return;
-    const document = this.#container.ownerDocument;
-    const style = document.createElement("style");
-    style.setAttribute("data-st-score-highlight-style", "true");
-    style.textContent = '[data-st-score-highlight="true"] { fill: #ff8c00 !important; stroke: #ff8c00 !important; } [data-st-score-highlight="true"] * { fill: #ff8c00 !important; stroke: #ff8c00 !important; }';
-    this.#container.prepend(style);
+  #restoreNoteHighlight(element: Element, state: NoteHighlightState): void {
+    element.classList.remove(state.className);
+    element.removeAttribute("data-st-score-highlight");
+    for (const target of state.painted) {
+      if (target.fill === null) target.element.removeAttribute("fill");
+      else target.element.setAttribute("fill", target.fill);
+      if (target.stroke === null) target.element.removeAttribute("stroke");
+      else target.element.setAttribute("stroke", target.stroke);
+    }
   }
 }

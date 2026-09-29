@@ -14,7 +14,7 @@ function createContainer() {
 }
 
 function createRenderer(overrides = {}) {
-  const calls = { highlights: [], clearHighlights: 0, disposed: 0 };
+  const calls = { highlights: [], clearHighlights: 0, measureHighlights: [], clearMeasureHighlights: 0, disposed: 0 };
   const target = Object.freeze({ partId: "P1", measureIndex: 0, noteIndex: 1, voice: 2 });
   const renderer = {
     id: "fake",
@@ -29,6 +29,8 @@ function createRenderer(overrides = {}) {
     },
     async highlight(value) { calls.highlights.push(value); },
     async clearHighlights() { calls.clearHighlights += 1; },
+    async highlightMeasure(value) { calls.measureHighlights.push(value); },
+    async clearMeasureHighlights() { calls.clearMeasureHighlights += 1; },
     async moveCursor() {},
     async setPartVisible() {},
     async dispose() { calls.disposed += 1; },
@@ -72,6 +74,17 @@ test("BrowserScoreHost exposes exact note hit-test and epoch-bound detailed evid
   assert.equal(calls.highlights.length, 1);
   await host.clearHighlights();
   assert.equal(calls.clearHighlights, 1);
+
+  await host.highlightMeasure({
+    target: { partId: "P1", measureIndex: 0 },
+    className: "st-score-suspicious-measure",
+  });
+  assert.deepEqual(calls.measureHighlights, [{
+    target: { partId: "P1", measureIndex: 0 },
+    className: "st-score-suspicious-measure",
+  }]);
+  await host.clearMeasureHighlights();
+  assert.equal(calls.clearMeasureHighlights, 1);
 });
 
 test("BrowserScoreHost advances render epoch and makes prior detailed evidence stale by comparison", async () => {
@@ -390,4 +403,25 @@ test("BrowserScoreHost measure evidence advances with replacement render epochs"
     sourceId: "score-B",
     reason: "NO_MEASURE_OWNER",
   });
+});
+
+
+test("BrowserScoreHost measure highlight fails closed when renderer extension is unavailable", async () => {
+  const container = createContainer();
+  const { renderer } = createRenderer();
+  delete renderer.highlightMeasure;
+  delete renderer.clearMeasureHighlights;
+  const host = new BrowserScoreHost(container, {
+    expectedContractVersion: "0.2.0",
+    rendererFactory: () => renderer,
+  });
+  await host.renderMusicXml("<score-partwise/>");
+  await assert.rejects(
+    () => host.highlightMeasure({ target: { partId: "P1", measureIndex: 0 } }),
+    /measure highlight capability/i,
+  );
+  await assert.rejects(
+    () => host.clearMeasureHighlights(),
+    /measure highlight capability/i,
+  );
 });

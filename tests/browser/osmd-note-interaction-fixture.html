@@ -138,11 +138,20 @@ async function proveAtWidth(width){
     stage("320:scroll-measure");const scrolledWhitespace=pointForMeasureWhitespace(host,measureTarget);if(scrolledWhitespace.evidence.renderEpoch!==firstRender.renderEpoch)throw new Error("scrolled measure hit used stale epoch");if(!sameMeasureRef(scrolledWhitespace.evidence.target,measureTarget))throw new Error("scrolled measure hit changed target");
   }
 
+  stage(`${width}:measure-highlight`);await host.highlightMeasure({target:measureTarget,className:"st-score-suspicious-measure"});
+  const measureOverlays=[...score.querySelectorAll('[data-st-score-measure-highlight="true"]')];
+  if(measureOverlays.length!==1)throw new Error(`measure highlight expected one group, got ${measureOverlays.length}`);
+  if(measureOverlays[0].getAttribute("data-st-score-measure-part-id")!=="P1"||measureOverlays[0].getAttribute("data-st-score-measure-index")!=="0")throw new Error("measure highlight identity drift");
+  const measureRects=[...measureOverlays[0].querySelectorAll("rect")];if(measureRects.length<1)throw new Error("measure highlight rendered no rectangles");if(measureRects.some(rect=>rect.getAttribute("pointer-events")!=="none"))throw new Error("measure highlight intercepted pointer events");
+  if(elements.some(element=>element.getAttribute("data-st-score-highlight")==="true"))throw new Error("measure highlight recolored note targets");
+
   stage(`${width}:multi-highlight`);await host.highlight({target:chord1,className:"teacher-focus"});await host.highlight({target:part2,className:"secondary-focus"});
   if(elements[1].getAttribute("data-st-score-highlight")!=="true"||!elements[1].classList.contains("teacher-focus"))throw new Error("primary highlight did not target exact chord notehead");
   if(elements[3].getAttribute("data-st-score-highlight")!=="true"||!elements[3].classList.contains("secondary-focus"))throw new Error("secondary highlight did not target exact notehead");
   if(elements[0].getAttribute("data-st-score-highlight")==="true")throw new Error("highlight leaked to other chord notehead");
   stage(`${width}:clear`);await host.clearHighlights();if(elements[1].getAttribute("data-st-score-highlight")!==null||elements[1].classList.contains("teacher-focus")||elements[3].classList.contains("secondary-focus"))throw new Error("clearHighlights left renderer-owned state");
+  if(score.querySelectorAll('[data-st-score-measure-highlight="true"]').length!==1)throw new Error("note highlight clearing removed suspicious measure highlight");
+  await host.clearMeasureHighlights();if(score.querySelector('[data-st-score-measure-highlight="true"]')!==null)throw new Error("clearMeasureHighlights left measure overlay");
 
   stage(`${width}:whitespace`);window.scrollTo(0,0);forceLayout();const sr=score.getBoundingClientRect();const whitespace=host.hitTestNoteDetailed({clientX:sr.left+2,clientY:sr.top+2});if(whitespace.kind!=="MISS")throw new Error("score whitespace produced a note hit");if(host.hitTestNote({clientX:Math.max(0,sr.right+20),clientY:5})!==null)throw new Error("outside coordinates produced a note hit");
   if(width===320){stage("320:no-measure-owner");const noMeasurePoint=pointForNoMeasureOwner(host);const noMeasure=host.hitTestMeasureDetailed(noMeasurePoint);if(noMeasure.kind!=="MISS"||noMeasure.reason!=="NO_MEASURE_OWNER")throw new Error("inside-SVG outside-measure point did not fail closed");}

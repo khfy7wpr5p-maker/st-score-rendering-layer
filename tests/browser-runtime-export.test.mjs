@@ -44,6 +44,10 @@ test("browser runtime is consumer-neutral and exposes bounded presentation inter
     assert.match(bootstrap, /activeHost\.highlight/);
     assert.match(bootstrap, /async clearHighlights\(\)/);
     assert.match(bootstrap, /activeHost\.clearHighlights\(\)/);
+    assert.match(bootstrap, /async highlightMeasure\(payload\)/);
+    assert.match(bootstrap, /activeHost\.highlightMeasure/);
+    assert.match(bootstrap, /async clearMeasureHighlights\(\)/);
+    assert.match(bootstrap, /activeHost\.clearMeasureHighlights\(\)/);
     assert.match(bootstrap, /Object\.getPrototypeOf\(payload\)/);
     assert.match(bootstrap, /contains unsupported field/);
     assert.match(bootstrap, /st-score-render-host-ready/);
