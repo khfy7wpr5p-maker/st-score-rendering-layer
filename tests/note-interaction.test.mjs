@@ -6,9 +6,11 @@ import { OsmdRenderer } from "../packages/adapter-osmd/dist/index.js";
 function createElement(name, parentElement = null) {
   const classes = new Set();
   const attrs = new Map();
-  return {
+  const children = [];
+  const element = {
     name,
     parentElement,
+    children,
     classList: {
       add(value) { classes.add(value); },
       remove(value) { classes.delete(value); },
@@ -17,7 +19,22 @@ function createElement(name, parentElement = null) {
     setAttribute(key, value) { attrs.set(key, value); },
     removeAttribute(key) { attrs.delete(key); },
     getAttribute(key) { return attrs.get(key) ?? null; },
+    append(...nodes) {
+      for (const node of nodes) {
+        node.parentElement = element;
+        children.push(node);
+      }
+    },
+    remove() {
+      const parent = element.parentElement;
+      if (parent?.children) {
+        const index = parent.children.indexOf(element);
+        if (index >= 0) parent.children.splice(index, 1);
+      }
+      element.parentElement = null;
+    },
   };
+  return element;
 }
 
 function graphicalNote(element, { rest = false, group = element } = {}) {
@@ -43,6 +60,11 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false,
         setAttribute(name, value) { attrs.set(name, value); },
         getAttribute(name) { return attrs.get(name) ?? null; },
       };
+    },
+    createElementNS(_namespace, name) {
+      const element = createElement(name);
+      element.ownerDocument = document;
+      return element;
     },
   };
   container.ownerDocument = document;
@@ -637,4 +659,94 @@ test("rerender rebuilds measure geometry instead of retaining stale regions", as
     kind: "HIT",
     target: { partId: "P1", measureIndex: 0 },
   });
+});
+
+
+test("measure highlight draws one reversible presentation overlay from SES-38 geometry", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+
+  assert.equal(typeof harness.renderer.highlightMeasure, "function");
+  assert.equal(typeof harness.renderer.clearMeasureHighlights, "function");
+
+  await harness.renderer.highlightMeasure({
+    target: { partId: "P1", measureIndex: 0 },
+    className: "st-score-suspicious-measure",
+  });
+  await harness.renderer.highlightMeasure({
+    target: { partId: "P1", measureIndex: 0 },
+    className: "st-score-suspicious-measure",
+  });
+
+  const groups = harness.elements.page1.children.filter(
+    (element) => element.getAttribute?.("data-st-score-measure-highlight") === "true",
+  );
+  assert.equal(groups.length, 1, "repeated finding for one measure must remain one highlight group");
+  assert.equal(groups[0].classList.contains("st-score-suspicious-measure"), true);
+  assert.equal(groups[0].getAttribute("data-st-score-measure-part-id"), "P1");
+  assert.equal(groups[0].getAttribute("data-st-score-measure-index"), "0");
+  assert.equal(groups[0].children.length, 1);
+  const rect = groups[0].children[0];
+  assert.equal(rect.getAttribute("x"), "100");
+  assert.equal(rect.getAttribute("y"), "50");
+  assert.equal(rect.getAttribute("width"), "100");
+  assert.equal(rect.getAttribute("height"), "100");
+  assert.equal(rect.getAttribute("pointer-events"), "none");
+
+  await harness.renderer.clearMeasureHighlights();
+  assert.equal(
+    harness.elements.page1.children.some(
+      (element) => element.getAttribute?.("data-st-score-measure-highlight") === "true",
+    ),
+    false,
+  );
+});
+
+test("measure highlight clearing is independent from note selection highlight", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+
+  const noteTarget = { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 };
+  await harness.renderer.highlight({ target: noteTarget, className: "teacher-focus" });
+  await harness.renderer.highlightMeasure({
+    target: { partId: "P1", measureIndex: 0 },
+    className: "st-score-suspicious-measure",
+  });
+
+  await harness.renderer.clearMeasureHighlights();
+  assert.equal(harness.elements.page1Note.classList.contains("teacher-focus"), true);
+  await harness.renderer.clearHighlights();
+  assert.equal(harness.elements.page1Note.classList.contains("teacher-focus"), false);
+});
+
+test("measure highlight fails closed for unmapped targets and rerender clears stale overlays", async () => {
+  const harness = createMeasureHitHarness();
+  await renderMeasureHarness(harness);
+
+  await assert.rejects(
+    () => harness.renderer.highlightMeasure({
+      target: { partId: "P9", measureIndex: 0 },
+      className: "st-score-suspicious-measure",
+    }),
+    /measure.*unavailable|target.*unavailable/i,
+  );
+
+  await harness.renderer.highlightMeasure({
+    target: { partId: "P1", measureIndex: 0 },
+    className: "st-score-suspicious-measure",
+  });
+  assert.equal(
+    harness.elements.page1.children.some(
+      (element) => element.getAttribute?.("data-st-score-measure-highlight") === "true",
+    ),
+    true,
+  );
+
+  await harness.renderer.render({ autoResize: false, pageMode: "page" });
+  assert.equal(
+    harness.elements.page1.children.some(
+      (element) => element.getAttribute?.("data-st-score-measure-highlight") === "true",
+    ),
+    false,
+  );
 });
