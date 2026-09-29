@@ -107,6 +107,7 @@ type BrowserDetailedMeasureHitTestRenderer = ScoreRenderer & Readonly<{
 }>;
 type BrowserMeasureHighlightRenderer = ScoreRenderer & Readonly<{
   highlightMeasure(highlight: BrowserMeasureHighlight): Promise<void>;
+  clearMeasureHighlights(): Promise<void>;
 }>;
 
 export type BrowserScoreHostOptions = Readonly<{
@@ -179,7 +180,8 @@ function hasDetailedMeasureHitTest(renderer: ScoreRenderer): renderer is Browser
 }
 
 function hasMeasureHighlight(renderer: ScoreRenderer): renderer is BrowserMeasureHighlightRenderer {
-  return typeof (renderer as Partial<BrowserMeasureHighlightRenderer>).highlightMeasure === "function";
+  const candidate = renderer as Partial<BrowserMeasureHighlightRenderer>;
+  return typeof candidate.highlightMeasure === "function" && typeof candidate.clearMeasureHighlights === "function";
 }
 
 function requireFinitePoint(point: BrowserNoteHitPoint): void {
@@ -561,6 +563,14 @@ export class BrowserScoreHost {
       throw new BrowserScoreHostUnavailableError("Selected renderer does not provide measure highlight capability.");
     }
     await renderer.highlightMeasure(normalizeMeasureHighlight(highlight));
+  }
+
+  async clearMeasureHighlights(): Promise<void> {
+    const renderer = this.#requireRenderer("Measure highlight clearing");
+    if (!hasMeasureHighlight(renderer)) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide measure highlight capability.");
+    }
+    await renderer.clearMeasureHighlights();
   }
 
   async clearHighlights(): Promise<void> {
