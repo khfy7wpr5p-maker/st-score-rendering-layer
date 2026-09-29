@@ -87,6 +87,10 @@ export type OsmdMeasureHitTargetRef = Readonly<{
   partId: string;
   measureIndex: number;
 }>;
+export type OsmdMeasureHighlight = Readonly<{
+  target: OsmdMeasureHitTargetRef;
+  className?: string;
+}>;
 export type OsmdMeasureHitMissReason =
   | "NO_ELEMENT_AT_POINT"
   | "OUTSIDE_RENDER_CONTAINER"
@@ -107,6 +111,7 @@ const CAPABILITIES: ReadonlySet<ScoreRendererCapability> = new Set([
   "tablature",
 ]);
 const DEFAULT_HIGHLIGHT_CLASS = "st-score-highlight";
+const DEFAULT_MEASURE_HIGHLIGHT_CLASS = "st-score-measure-highlight";
 const HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_HIT_TEST_NOTE_ELEMENTS = 200_000;
 const MAX_MEASURE_HIT_REGIONS = 100_000;
@@ -253,6 +258,7 @@ export class OsmdRenderer implements ScoreRenderer {
   readonly #container: HTMLElement;
   readonly #factory: OsmdFactory;
   readonly #highlighted = new Map<Element, string>();
+  readonly #measureHighlightOverlays = new Set<Element>();
 
   #noteRefByElement: WeakMap<Element, HitTestOwner> = new WeakMap();
   #renderedEventRefByElement: WeakMap<Element, RenderedEventHitOwner> = new WeakMap();
@@ -460,12 +466,87 @@ export class OsmdRenderer implements ScoreRenderer {
     this.#highlighted.set(element, className);
   }
 
+  async highlightMeasure(highlight: OsmdMeasureHighlight): Promise<void> {
+    this.#requireRendered("highlightMeasure()");
+    const className = highlight.className ?? DEFAULT_MEASURE_HIGHLIGHT_CLASS;
+    if (!HIGHLIGHT_CLASS_PATTERN.test(className)) {
+      throw new Error("Measure highlight className must be one safe CSS class token of at most 64 characters.");
+    }
+    const target = highlight.target;
+    if (
+      target === null || typeof target !== "object" || Array.isArray(target)
+      || !isBoundedMeasurePartId(target.partId)
+    ) {
+      throw new TypeError("Measure highlight target partId must be a non-empty bounded identifier.");
+    }
+    requireNonNegativeInteger(target.measureIndex, "Measure highlight target measureIndex");
+    if (!this.#measureGeometryAvailable) {
+      throw new Error("Measure highlight geometry is unavailable for the current render.");
+    }
+
+    const regions = this.#measureHitRegions.filter((region) => sameMeasureHitTarget(region.target, target));
+    if (regions.length === 0) {
+      throw new Error("Measure highlight target was not found in current renderer geometry.");
+    }
+
+    const byPage = new Map<number, OsmdMeasureHitRegion[]>();
+    for (const region of regions) {
+      const values = byPage.get(region.pageNumber) ?? [];
+      values.push(region);
+      byPage.set(region.pageNumber, values);
+    }
+
+    const prepared: Array<Readonly<{
+      page: OsmdOwnedSvgPage;
+      left: number;
+      right: number;
+      top: number;
+      bottom: number;
+    }>> = [];
+    for (const [pageNumber, pageRegions] of byPage) {
+      const page = this.#resolveOwnedSvgPage(pageNumber);
+      if (page === undefined) {
+        throw new Error("Measure highlight page identity is unavailable or ambiguous.");
+      }
+      const left = Math.min(...pageRegions.map((region) => region.left));
+      const right = Math.max(...pageRegions.map((region) => region.right));
+      const top = Math.min(...pageRegions.map((region) => region.top));
+      const bottom = Math.max(...pageRegions.map((region) => region.bottom));
+      if (!(right > left) || !(bottom > top)) {
+        throw new Error("Measure highlight geometry is invalid.");
+      }
+      prepared.push(Object.freeze({ page, left, right, top, bottom }));
+    }
+
+    const document = this.#container.ownerDocument;
+    for (const item of prepared) {
+      const overlay = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      overlay.classList.add(className);
+      overlay.setAttribute("data-st-score-measure-highlight", "true");
+      overlay.setAttribute("x", String(item.left * OSMD_SVG_UNITS_PER_UNIT));
+      overlay.setAttribute("y", String(item.top * OSMD_SVG_UNITS_PER_UNIT));
+      overlay.setAttribute("width", String((item.right - item.left) * OSMD_SVG_UNITS_PER_UNIT));
+      overlay.setAttribute("height", String((item.bottom - item.top) * OSMD_SVG_UNITS_PER_UNIT));
+      overlay.setAttribute("fill", "#ff0000");
+      overlay.setAttribute("fill-opacity", "0.06");
+      overlay.setAttribute("stroke", "#d00000");
+      overlay.setAttribute("stroke-opacity", "0.9");
+      overlay.setAttribute("stroke-width", "1.5");
+      overlay.setAttribute("vector-effect", "non-scaling-stroke");
+      overlay.setAttribute("pointer-events", "none");
+      item.page.appendChild(overlay);
+      this.#measureHighlightOverlays.add(overlay);
+    }
+  }
+
   async clearHighlights(): Promise<void> {
     for (const [element, className] of this.#highlighted) {
       element.classList.remove(className);
       element.removeAttribute("data-st-score-highlight");
     }
     this.#highlighted.clear();
+    for (const overlay of this.#measureHighlightOverlays) overlay.remove();
+    this.#measureHighlightOverlays.clear();
   }
 
   async moveCursor(target: ScoreMeasureRef): Promise<void> {
