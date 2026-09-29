@@ -68,7 +68,15 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false,
     },
   };
   container.ownerDocument = document;
-  container.querySelector = (selector) => selector === "style[data-st-score-highlight-style]" ? styleNodes[0] ?? null : null;
+  container.querySelector = (selector) => {
+    if (selector === "style[data-st-score-highlight-style]") {
+      return styleNodes.find((node) => node.getAttribute?.("data-st-score-highlight-style") === "true") ?? null;
+    }
+    if (selector === "style[data-st-score-measure-highlight-style]") {
+      return styleNodes.find((node) => node.getAttribute?.("data-st-score-measure-highlight-style") === "true") ?? null;
+    }
+    return null;
+  };
   container.querySelectorAll = (selector) => selector === "svg" ? [{ outerHTML: "<svg></svg>" }] : [];
   container.prepend = (node) => styleNodes.unshift(node);
   container.replaceChildren = () => {};
@@ -444,6 +452,11 @@ function createMeasureHitHarness({
         getAttribute(name) { return attrs.get(name) ?? null; },
       };
     },
+    createElementNS(_namespace, name) {
+      const element = createElement(name);
+      element.ownerDocument = document;
+      return element;
+    },
   };
   container.ownerDocument = document;
   for (const page of allSvgPages) page.ownerDocument = document;
@@ -473,6 +486,12 @@ function createMeasureHitHarness({
   });
 
   const page1Primary = measureBox(1);
+  page1Primary.staffEntries = [{
+    graphicalVoiceEntries: [{
+      parentVoiceEntry: { ParentVoice: { VoiceId: 1 } },
+      notes: [graphicalNote(page1Note)],
+    }],
+  }];
   const page1SecondStaff = sameTargetMultiStaff ? measureBox(1) : undefined;
   const page2Primary = measureBox(2);
   const overlappingOtherPart = overlappingDifferentParts ? measureBox(1) : undefined;
