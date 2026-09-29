@@ -131,6 +131,8 @@ type IndexedGraphicalNote = Readonly<{
 }>;
 type HitTestOwner = ScoreNoteRef | typeof AMBIGUOUS_HIT_OWNER | typeof NO_NOTE_HIT_OWNER;
 type RenderedEventHitOwner = OsmdRenderedEventTargetRef | typeof AMBIGUOUS_HIT_OWNER;
+type HighlightPaintSnapshot = Readonly<{ element: Element; fill: string | null; stroke: string | null }>;
+type NoteHighlightState = Readonly<{ className: string; painted: readonly HighlightPaintSnapshot[] }>;
 type ElementOwnershipResult = Readonly<{
   insideContainer: boolean;
   target?: ScoreNoteRef;
@@ -258,7 +260,7 @@ export class OsmdRenderer implements ScoreRenderer {
   readonly capabilities = CAPABILITIES;
   readonly #container: HTMLElement;
   readonly #factory: OsmdFactory;
-  readonly #highlighted = new Map<Element, string>();
+  readonly #highlighted = new Map<Element, NoteHighlightState>();
   readonly #measureHighlighted = new Map<string, Element>();
 
   #noteRefByElement: WeakMap<Element, HitTestOwner> = new WeakMap();
@@ -463,17 +465,27 @@ export class OsmdRenderer implements ScoreRenderer {
       throw new Error("Highlight className must be one safe CSS class token of at most 64 characters.");
     }
     const element = this.resolveRenderedNoteElement(highlight.target);
-    this.#ensureHighlightStyle();
+    const existing = this.#highlighted.get(element);
+    if (existing !== undefined) this.#restoreNoteHighlight(element, existing);
+    const descendants = typeof element.querySelectorAll === "function"
+      ? [...element.querySelectorAll("*")]
+      : [];
+    const painted = [element, ...descendants].map((target) => Object.freeze({
+      element: target,
+      fill: target.getAttribute("fill"),
+      stroke: target.getAttribute("stroke"),
+    }));
     element.classList.add(className);
     element.setAttribute("data-st-score-highlight", "true");
-    this.#highlighted.set(element, className);
+    for (const target of painted) {
+      target.element.setAttribute("fill", "#ff8c00");
+      target.element.setAttribute("stroke", "#ff8c00");
+    }
+    this.#highlighted.set(element, Object.freeze({ className, painted: Object.freeze(painted) }));
   }
 
   async clearHighlights(): Promise<void> {
-    for (const [element, className] of this.#highlighted) {
-      element.classList.remove(className);
-      element.removeAttribute("data-st-score-highlight");
-    }
+    for (const [element, state] of this.#highlighted) this.#restoreNoteHighlight(element, state);
     this.#highlighted.clear();
   }
 
@@ -996,12 +1008,14 @@ export class OsmdRenderer implements ScoreRenderer {
     this.#measureGeometryAvailable = false;
   }
 
-  #ensureHighlightStyle(): void {
-    if (this.#container.querySelector("style[data-st-score-highlight-style]") !== null) return;
-    const document = this.#container.ownerDocument;
-    const style = document.createElement("style");
-    style.setAttribute("data-st-score-highlight-style", "true");
-    style.textContent = '[data-st-score-highlight="true"] { fill: #ff8c00 !important; stroke: #ff8c00 !important; } [data-st-score-highlight="true"] * { fill: #ff8c00 !important; stroke: #ff8c00 !important; }';
-    this.#container.prepend(style);
+  #restoreNoteHighlight(element: Element, state: NoteHighlightState): void {
+    element.classList.remove(state.className);
+    element.removeAttribute("data-st-score-highlight");
+    for (const target of state.painted) {
+      if (target.fill === null) target.element.removeAttribute("fill");
+      else target.element.setAttribute("fill", target.fill);
+      if (target.stroke === null) target.element.removeAttribute("stroke");
+      else target.element.setAttribute("stroke", target.stroke);
+    }
   }
 }
