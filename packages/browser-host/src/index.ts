@@ -68,6 +68,10 @@ export type BrowserMeasureHitTargetRef = Readonly<{
   partId: string;
   measureIndex: number;
 }>;
+export type BrowserMeasureHighlight = Readonly<{
+  target: BrowserMeasureHitTargetRef;
+  className?: string;
+}>;
 export type BrowserMeasureHitMissReason =
   | "NO_ELEMENT_AT_POINT"
   | "OUTSIDE_RENDER_CONTAINER"
@@ -101,6 +105,10 @@ type BrowserDetailedRenderedEventHitTestRenderer = ScoreRenderer & Readonly<{
 type BrowserDetailedMeasureHitTestRenderer = ScoreRenderer & Readonly<{
   resolveMeasureAtClientPointDetailed(point: BrowserNoteHitPoint): unknown;
 }>;
+type BrowserMeasureHighlightRenderer = ScoreRenderer & Readonly<{
+  highlightMeasure(highlight: BrowserMeasureHighlight): Promise<void>;
+  clearMeasureHighlights(): Promise<void>;
+}>;
 
 export type BrowserScoreHostOptions = Readonly<{
   expectedContractVersion: string;
@@ -129,6 +137,7 @@ export class BrowserScoreHostUnavailableError extends Error {
 const DEFAULT_RENDERER_FACTORY: BrowserRendererFactory = (container) => new OsmdRenderer(container);
 const EVIDENCE_SOURCE_ID_MAX_LENGTH = 256;
 const NOTE_PART_ID_MAX_LENGTH = 128;
+const HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const HIT_MISS_REASONS: ReadonlySet<BrowserNoteHitMissReason> = new Set([
   "NO_ELEMENT_AT_POINT",
   "OUTSIDE_RENDER_CONTAINER",
@@ -168,6 +177,11 @@ function hasDetailedRenderedEventHitTest(renderer: ScoreRenderer): renderer is B
 
 function hasDetailedMeasureHitTest(renderer: ScoreRenderer): renderer is BrowserDetailedMeasureHitTestRenderer {
   return typeof (renderer as Partial<BrowserDetailedMeasureHitTestRenderer>).resolveMeasureAtClientPointDetailed === "function";
+}
+
+function hasMeasureHighlight(renderer: ScoreRenderer): renderer is BrowserMeasureHighlightRenderer {
+  const candidate = renderer as Partial<BrowserMeasureHighlightRenderer>;
+  return typeof candidate.highlightMeasure === "function" && typeof candidate.clearMeasureHighlights === "function";
 }
 
 function requireFinitePoint(point: BrowserNoteHitPoint): void {
@@ -265,6 +279,19 @@ function normalizeMeasureHitTargetRef(value: unknown): BrowserMeasureHitTargetRe
     throw new RangeError("Detailed measure hit target measureIndex must be a non-negative safe integer.");
   }
   return Object.freeze({ partId, measureIndex: measureIndex as number });
+}
+
+function normalizeMeasureHighlight(value: unknown): BrowserMeasureHighlight {
+  const highlight = requirePlainObject(value, "Measure highlight");
+  requireAllowedKeys(highlight, new Set(["target", "className"]), "Measure highlight");
+  const target = normalizeMeasureHitTargetRef(highlight.target);
+  const className = highlight.className;
+  if (className !== undefined && (typeof className !== "string" || !HIGHLIGHT_CLASS_PATTERN.test(className))) {
+    throw new TypeError("Measure highlight className must be one safe CSS class token of at most 64 characters.");
+  }
+  return className === undefined
+    ? Object.freeze({ target })
+    : Object.freeze({ target, className });
 }
 
 function normalizeDetailedMeasureHit(value: unknown):
@@ -528,6 +555,22 @@ export class BrowserScoreHost {
       throw new BrowserScoreHostUnavailableError("Selected renderer does not provide note highlight capability.");
     }
     await renderer.highlight(highlight);
+  }
+
+  async highlightMeasure(highlight: BrowserMeasureHighlight): Promise<void> {
+    const renderer = this.#requireRenderer("Measure highlight");
+    if (!hasMeasureHighlight(renderer)) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide measure highlight capability.");
+    }
+    await renderer.highlightMeasure(normalizeMeasureHighlight(highlight));
+  }
+
+  async clearMeasureHighlights(): Promise<void> {
+    const renderer = this.#requireRenderer("Measure highlight clearing");
+    if (!hasMeasureHighlight(renderer)) {
+      throw new BrowserScoreHostUnavailableError("Selected renderer does not provide measure highlight capability.");
+    }
+    await renderer.clearMeasureHighlights();
   }
 
   async clearHighlights(): Promise<void> {
