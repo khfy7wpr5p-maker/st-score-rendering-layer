@@ -19,7 +19,23 @@ export function isRealmSafePlainInteractionObject(payload) {
 
 function injectCursorAndInteractionBridge(bootstrap) {
   const hostMarker = `const runtimeHost = Object.freeze({\n`;
-  const helpers = `const INTERACTION_PART_ID_MAX_LENGTH = 128;\nconst HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;\n\n${isRealmSafePlainInteractionObject.toString()}\n\nfunction requirePlainInteractionObject(payload, label, allowedKeys) {\n  if (!isRealmSafePlainInteractionObject(payload)) {\n    throw new TypeError(\`\${label} must be a plain object.\`);\n  }\n  for (const key of Object.keys(payload)) {\n    if (!allowedKeys.has(key)) throw new TypeError(\`\${label} contains unsupported field '\${key}'.\`);\n  }\n  return payload;\n}\n\nfunction requireScoreNoteRef(payload) {\n  const target = requirePlainInteractionObject(\n    payload,\n    "Score note target",\n    new Set(["partId", "measureIndex", "noteIndex", "voice"]),\n  );\n  if (typeof target.partId !== "string" || target.partId.length === 0 ||\n      target.partId.length > INTERACTION_PART_ID_MAX_LENGTH || target.partId !== target.partId.trim()) {\n    throw new TypeError("Score note partId must be a non-empty bounded string without surrounding whitespace.");\n  }\n  for (const key of ["measureIndex", "noteIndex"]) {\n    if (!Number.isSafeInteger(target[key]) || target[key] < 0) {\n      throw new RangeError(\`Score note \${key} must be a non-negative safe integer.\`);\n    }\n  }\n  if (target.voice !== undefined && (!Number.isSafeInteger(target.voice) || target.voice < 0)) {\n    throw new RangeError("Score note voice must be a non-negative safe integer when supplied.");\n  }\n  return target.voice === undefined\n    ? { partId: target.partId, measureIndex: target.measureIndex, noteIndex: target.noteIndex }\n    : { partId: target.partId, measureIndex: target.measureIndex, noteIndex: target.noteIndex, voice: target.voice };\n}\n\n`;
+  const helpers = `const INTERACTION_PART_ID_MAX_LENGTH = 128;\nconst HIGHLIGHT_CLASS_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;\n\n${isRealmSafePlainInteractionObject.toString()}\n\nfunction requirePlainInteractionObject(payload, label, allowedKeys) {\n  if (!isRealmSafePlainInteractionObject(payload)) {\n    throw new TypeError(\`\${label} must be a plain object.\`);\n  }\n  for (const key of Object.keys(payload)) {\n    if (!allowedKeys.has(key)) throw new TypeError(\`\${label} contains unsupported field '\${key}'.\`);\n  }\n  return payload;\n}\n\nfunction requireScoreMeasureRef(payload) {
+  const target = requirePlainInteractionObject(
+    payload,
+    "Score measure target",
+    new Set(["partId", "measureIndex"]),
+  );
+  if (typeof target.partId !== "string" || target.partId.length === 0 ||
+      target.partId.length > INTERACTION_PART_ID_MAX_LENGTH || target.partId !== target.partId.trim()) {
+    throw new TypeError("Score measure partId must be a non-empty bounded string without surrounding whitespace.");
+  }
+  if (!Number.isSafeInteger(target.measureIndex) || target.measureIndex < 0) {
+    throw new RangeError("Score measure measureIndex must be a non-negative safe integer.");
+  }
+  return { partId: target.partId, measureIndex: target.measureIndex };
+}
+
+function requireScoreNoteRef(payload) {\n  const target = requirePlainInteractionObject(\n    payload,\n    "Score note target",\n    new Set(["partId", "measureIndex", "noteIndex", "voice"]),\n  );\n  if (typeof target.partId !== "string" || target.partId.length === 0 ||\n      target.partId.length > INTERACTION_PART_ID_MAX_LENGTH || target.partId !== target.partId.trim()) {\n    throw new TypeError("Score note partId must be a non-empty bounded string without surrounding whitespace.");\n  }\n  for (const key of ["measureIndex", "noteIndex"]) {\n    if (!Number.isSafeInteger(target[key]) || target[key] < 0) {\n      throw new RangeError(\`Score note \${key} must be a non-negative safe integer.\`);\n    }\n  }\n  if (target.voice !== undefined && (!Number.isSafeInteger(target.voice) || target.voice < 0)) {\n    throw new RangeError("Score note voice must be a non-negative safe integer when supplied.");\n  }\n  return target.voice === undefined\n    ? { partId: target.partId, measureIndex: target.measureIndex, noteIndex: target.noteIndex }\n    : { partId: target.partId, measureIndex: target.measureIndex, noteIndex: target.noteIndex, voice: target.voice };\n}\n\n`;
   const hostIndex = bootstrap.indexOf(hostMarker);
   if (hostIndex < 0 || bootstrap.indexOf(hostMarker, hostIndex + hostMarker.length) >= 0) {
     throw new Error("Unable to locate the unique runtime host marker for interaction helper injection.");
