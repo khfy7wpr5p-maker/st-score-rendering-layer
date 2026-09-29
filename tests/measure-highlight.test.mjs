@@ -125,7 +125,7 @@ test("SES-106 OSMD measure highlight draws a reversible measure-level overlay wi
   assert.equal(overlays[0].getAttribute("width"), "100");
   assert.equal(overlays[0].getAttribute("height"), "100");
 
-  await renderer.clearHighlights();
+  await renderer.clearMeasureHighlights();
   assert.equal(page.children.filter((child) => child.getAttribute?.("data-st-score-measure-highlight") === "true").length, 0);
 });
 
@@ -153,7 +153,10 @@ function fakeBrowserRenderer({ includeMeasureHighlight = true } = {}) {
     async setPartVisible() {},
     async dispose() {},
   };
-  if (includeMeasureHighlight) renderer.highlightMeasure = async (payload) => { calls.push(payload); };
+  if (includeMeasureHighlight) {
+    renderer.highlightMeasure = async (payload) => { calls.push(payload); };
+    renderer.clearMeasureHighlights = async () => {};
+  }
   return { renderer, calls };
 }
 
@@ -173,6 +176,7 @@ test("SES-106 BrowserScoreHost exposes additive measure highlight and fails clos
     target: { partId: "P1", measureIndex: 0 },
     className: "correction-suspect",
   }]);
+  await host.clearMeasureHighlights();
 
   const unsupported = fakeBrowserRenderer({ includeMeasureHighlight: false });
   const noCapabilityHost = new BrowserScoreHost({ replaceChildren() {} }, {
