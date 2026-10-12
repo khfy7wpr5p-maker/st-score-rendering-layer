@@ -172,7 +172,7 @@ OSMD produces the SVG DOM. `exportSvg()` serializes the SVG elements currently i
 
 ## 7. Coordinate model
 
-There is no ST-owned score-coordinate transform pipeline.
+Note/event hit-testing uses browser viewport coordinates and DOM ownership. Measure hit-testing additionally uses renderer-owned graphical-measure geometry from the current OSMD render and projects live browser coordinates into the correct owned SVG page before comparing against OSMD measure bounds.
 
 The interaction API accepts browser viewport coordinates:
 
@@ -207,6 +207,12 @@ The browser therefore accounts for current scrolling and rendered CSS/SVG transf
 
 Interaction geometry is therefore not identical to the visible notehead, but it is also not an arbitrary expanded bounding box. Shared graphical groups fail closed. There is no radius/nearest-note fallback.
 
+### Deterministic measure geometry
+
+For SES-38, the adapter builds a bounded measure-region index from current `GraphicalMeasure.PositionAndShape` values. Page identity is resolved from the owned SVG page itself; the implementation does not assume SVG DOM order or infer page number by index arithmetic. The live client point is transformed through that page's current `getScreenCTM().inverse()` and normalized into OSMD units before region matching.
+
+A measure hit succeeds only when exactly one unique `{ partId, measureIndex }` owns the projected point. Same-target overlap across staves is deduplicated; different-target overlap, missing geometry, invalid page identity, transform failure or ambiguous ownership fails closed. No nearest-measure search or consumer-side SVG scraping is part of the contract.
+
 ## 8. Note interaction architecture
 
 The renderer does not install pointer/touch handlers. The host application owns gesture/event binding and decides when to call `hitTestNote()`.
@@ -227,6 +233,8 @@ flowchart TD
   Ref --> Resolve --> Select
   Select --> Highlight
 ```
+
+`BrowserScoreHost.hitTestMeasureDetailed()` exposes the same current-render evidence discipline as detailed note hits: current `renderEpoch`, optional bounded `sourceId`, a presentation-only measure locator on HIT, and a bounded MISS reason. The base `ScoreRenderer` interface remains unchanged; this is an additive concrete browser/adapter/runtime extension.
 
 Important ownership rule: **selection state is not stored by `BrowserScoreHost` or `OsmdRenderer`**. The renderer owns only reversible highlight presentation. Deselect behavior belongs to the consumer, typically by clearing consumer selection and calling `clearHighlights()`.
 
@@ -296,8 +304,8 @@ flowchart TD
 
 ST-owned runtime state:
 
-- `BrowserScoreHost`: current renderer reference, disposed flag, render-in-flight flag;
-- `OsmdRenderer`: OSMD instance, loaded/rendered flags, highlight map, hit-test `WeakMap`;
+- `BrowserScoreHost`: current renderer reference, disposed flag, render-in-flight flag, opaque current `renderEpoch` and optional bounded `sourceId` evidence;
+- `OsmdRenderer`: OSMD instance, loaded/rendered flags, highlight map, note/event hit-test `WeakMap`s, bounded current-render measure-region index and geometry-availability flag;
 - headless renderer: current source and last SVG pages;
 - accessibility bridge: applied target snapshots and focus order.
 
@@ -417,14 +425,15 @@ Support means **ST contract/test evidence**, not every notation feature OSMD may
 
 ## 16. Mobile / iPhone / Safari architecture
 
-There is no Safari-specific code path and no automated WebKit/Safari job.
+There is no Safari-specific code path. CI includes a pinned Playwright WebKit-engine regression gate, but it remains engine evidence rather than physical iPhone/Safari acceptance.
 
 The interaction implementation is browser-generic:
 
-- host supplies `clientX/clientY`;
-- adapter uses `elementFromPoint()`;
-- exact notehead/unique graphical group establishes deterministic ownership;
-- shared groups abstain.
+- host supplies live `clientX/clientY`;
+- NOTE/REST ownership uses `elementFromPoint()` plus renderer-owned DOM ownership maps;
+- measure ownership uses the current owned SVG page transform plus the renderer-owned `GraphicalMeasure.PositionAndShape` region index;
+- exact notehead/unique graphical group establishes deterministic NOTE ownership;
+- shared/ambiguous note or measure ownership abstains.
 
 PR #16 records real iPhone/Safari acceptance evidence that exact-notehead-only ownership was too narrow and motivated the unique graphical-group widening. Repository CI itself proves narrow responsive rendering at 320px in Chrome/Chromium, not Safari.
 
@@ -475,7 +484,7 @@ The protected-branch `foundation` workflow performs:
 2. real Chrome/Chromium browser fixtures (`npm run test:browser`);
 3. real headless visual-regression gate (`npm run test:headless`).
 
-There is no automated Safari/WebKit gate and no ScoreGraph/playback/OMR test because those components do not exist here.
+The CI matrix includes a pinned Playwright WebKit-engine gate in addition to Chromium and headless validation. There is no physical Safari automation and no ScoreGraph/playback/OMR test because those components do not exist here.
 
 See [TESTING.md](TESTING.md).
 
@@ -489,6 +498,7 @@ The following are code/test backed:
 4. Only one BrowserScoreHost replacement render may be in flight.
 5. `ScoreNoteRef` is deterministic from rendered traversal; pitch/duration/proximity are not identity inputs.
 6. Ambiguous note DOM ownership fails closed rather than guessing.
+7. Measure hit-testing uses only current-render OSMD geometry and owned SVG page transforms; page-order assumptions and nearest-measure inference are forbidden.
 7. Highlighting mutates renderer-owned DOM presentation state, not source MusicXML colors.
 8. Hit-test DOM ownership is rebuilt after render changes; stale DOM is not retained by the current WeakMap index.
 9. Selection/canonical musical authority remains outside the renderer.
@@ -506,7 +516,8 @@ The following are code/test backed:
 | canonical note | consumer/upstream authoritative musical identity; not implemented here |
 | visual geometry | OSMD-produced SVG geometry |
 | interaction geometry | exact notehead plus uniquely-owned graphical group DOM ownership |
-| hit region | DOM elements that resolve deterministically to one `ScoreNoteRef` |
+| note hit region | DOM elements that resolve deterministically to one `ScoreNoteRef` |
+| measure hit region | current-render OSMD graphical-measure rectangle projected through the correct owned SVG page |
 | highlight | reversible renderer-owned SVG class/attribute state |
 | selection | consumer-owned application state |
 | browser host | `BrowserScoreHost`, ST-owned presentation/lifecycle boundary |
