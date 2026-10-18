@@ -63,11 +63,32 @@
       if (!labels.includes("7") || !labels.includes("12")) {
         throw new Error(`TAB frets 7 and 12 missing: ${labels.join(",")}`);
       }
+      const fret7 = [...svg.querySelectorAll("text")]
+        .find((element) => element.textContent?.trim() === "7");
+      if (!fret7) throw new Error("TAB fret 7 SVG text is unavailable");
+      const fret7Rect = fret7.getBoundingClientRect();
+      const fret7Point = {
+        clientX: fret7Rect.left + fret7Rect.width / 2,
+        clientY: fret7Rect.top + fret7Rect.height / 2,
+      };
+      const fret7Hit = host.hitTestNoteDetailed(fret7Point);
+      const fret7Lineage = [];
+      for (let element = fret7; element && element !== svg; element = element.parentElement) {
+        fret7Lineage.push({
+          tag: element.tagName,
+          id: element.id,
+          class: element.getAttribute("class"),
+          text: element === fret7 ? element.textContent?.trim() : undefined,
+        });
+      }
+      status.dataset.tabDiagnostics = JSON.stringify({ fret7Hit, fret7Lineage });
       const highlightClass = "student-playback-note";
+      status.dataset.stage = "notation-highlight";
       await host.highlight({
         target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 },
         className: highlightClass,
       });
+      status.dataset.stage = "tab-highlight";
       await host.highlight({
         target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 5 },
         className: highlightClass,
@@ -100,7 +121,8 @@
       status.dataset.renderPass = "true";
       status.textContent = "PILOT_TAB_PASS";
     } catch (error) {
-      status.dataset.renderError = String(error?.message ?? error);
+      const diagnostics = status.dataset.tabDiagnostics ?? "unavailable";
+      status.dataset.renderError = `${String(error?.message ?? error)}; diagnostics=${diagnostics}`;
       status.textContent = "PILOT_TAB_FAIL";
     }
   </script>
