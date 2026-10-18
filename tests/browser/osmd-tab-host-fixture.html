@@ -21,6 +21,7 @@
   </script>
   <script type="module">
     import { SCORE_RENDERER_CONTRACT_VERSION } from "@st/score-renderer-contracts";
+    import { OsmdRenderer } from "@st/score-renderer-osmd";
     import { BrowserScoreHost } from "../../packages/browser-host/dist/index.js";
 
     // Same two-staff, six-line guitar pilot score used by Student App.
@@ -53,7 +54,18 @@
     const score = document.getElementById("score");
     const status = document.getElementById("status");
     try {
-      const host = new BrowserScoreHost(score, { expectedContractVersion: SCORE_RENDERER_CONTRACT_VERSION });
+      let osmd;
+      const host = new BrowserScoreHost(score, {
+        expectedContractVersion: SCORE_RENDERER_CONTRACT_VERSION,
+        rendererFactory(container) {
+          const OSMD = window.opensheetmusicdisplay?.OpenSheetMusicDisplay;
+          if (!OSMD) throw new Error("OSMD browser global unavailable");
+          return new OsmdRenderer(container, (rendererContainer) => {
+            osmd = new OSMD(rendererContainer, { autoResize: true, backend: "svg" });
+            return osmd;
+          });
+        },
+      });
       await host.renderMusicXml(xml, {
         pageMode: "continuous", autoResize: true, drawTitle: false, drawComposer: false,
       }, "student-pilot-tab");
@@ -66,6 +78,35 @@
       const fret7 = [...svg.querySelectorAll("text")]
         .find((element) => element.textContent?.trim() === "7");
       if (!fret7) throw new Error("TAB fret 7 SVG text is unavailable");
+      const graphicalNotes = [];
+      const instrument = osmd?.Sheet?.Instruments?.find((candidate) => candidate.IdString === "P1");
+      for (const staff of instrument?.Staves ?? []) {
+        const measure = osmd?.graphic?.measureList?.[0]?.[staff.idInMusicSheet];
+        for (const staffEntry of measure?.staffEntries ?? []) {
+          for (const voiceEntry of staffEntry.graphicalVoiceEntries ?? []) {
+            const voice = voiceEntry.parentVoiceEntry?.ParentVoice?.VoiceId
+              ?? voiceEntry.parentVoiceEntry?.parentVoice?.VoiceId;
+            for (const [noteIndex, note] of (voiceEntry.notes ?? []).entries()) {
+              const group = note.getSVGGElement?.();
+              const noteheads = note.getNoteheadSVGs?.();
+              graphicalNotes.push({
+                staffId: staff.idInMusicSheet,
+                voice,
+                noteIndex,
+                vfnoteIndex: note.vfnoteIndex,
+                noteheadCount: Array.isArray(noteheads) ? noteheads.length : null,
+                group: group ? {
+                  tag: group.tagName,
+                  id: group.id,
+                  class: group.getAttribute?.("class"),
+                  inScore: score.contains(group),
+                  text: group.textContent?.trim(),
+                } : null,
+              });
+            }
+          }
+        }
+      }
       const fret7Rect = fret7.getBoundingClientRect();
       const fret7Point = {
         clientX: fret7Rect.left + fret7Rect.width / 2,
@@ -81,7 +122,7 @@
           text: element === fret7 ? element.textContent?.trim() : undefined,
         });
       }
-      status.dataset.tabDiagnostics = JSON.stringify({ fret7Hit, fret7Lineage });
+      status.dataset.tabDiagnostics = JSON.stringify({ fret7Hit, fret7Lineage, graphicalNotes });
       const highlightClass = "student-playback-note";
       status.dataset.stage = "notation-highlight";
       await host.highlight({
