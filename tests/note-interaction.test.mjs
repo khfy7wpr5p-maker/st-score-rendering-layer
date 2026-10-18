@@ -19,6 +19,18 @@ function createElement(name, parentElement = null) {
     setAttribute(key, value) { attrs.set(key, value); },
     removeAttribute(key) { attrs.delete(key); },
     getAttribute(key) { return attrs.get(key) ?? null; },
+    querySelectorAll(selector) {
+      if (selector !== "*") return [];
+      const descendants = [];
+      const visit = (node) => {
+        for (const child of node.children ?? []) {
+          descendants.push(child);
+          visit(child);
+        }
+      };
+      visit(element);
+      return descendants;
+    },
     append(...nodes) {
       for (const node of nodes) {
         node.parentElement = element;
@@ -46,9 +58,10 @@ function graphicalNote(element, { rest = false, group = element } = {}) {
   };
 }
 
-function createInteractionHarness({ ambiguousChord = false, includeRest = false, includeTab = false, sharedTabGroup = false, tabWithoutGroup = false } = {}) {
+function createInteractionHarness({ ambiguousChord = false, includeRest = false, includeTab = false, sharedTabGroup = false, tabWithoutGroup = false, tabViaSvgId = false } = {}) {
   let hitElement = null;
   const styleNodes = [];
+  let tabSvgIdMatches = [];
   const container = createElement("container");
   const document = {
     defaultView: { Element: Object },
@@ -77,7 +90,11 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false,
     }
     return null;
   };
-  container.querySelectorAll = (selector) => selector === "svg" ? [{ outerHTML: "<svg></svg>" }] : [];
+  container.querySelectorAll = (selector) => {
+    if (selector === "svg") return [{ outerHTML: "<svg></svg>" }];
+    if (selector === '[id="vf-auto1016"]') return tabSvgIdMatches;
+    return [];
+  };
   container.prepend = (node) => styleNodes.unshift(node);
   container.replaceChildren = () => {};
 
@@ -90,7 +107,11 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false,
   const staff2Group = createElement("p1-staff2-v1-group", container);
   const p1staff2v1n2 = createElement("p1-staff2-v1-n2", staff2Group);
   const tabGroup = createElement("p1-tab-fret-group", container);
-  const tabFret = createElement("p1-tab-fret", tabGroup);
+  tabGroup.setAttribute("id", "vf-auto1016");
+  tabGroup.classList.add("vf-tabnote");
+  tabSvgIdMatches = [tabGroup];
+  const tabFret = createElement("p1-tab-fret");
+  tabGroup.append(tabFret);
   const p2Group = createElement("p2-v1-group", container);
   const p2v1n0 = createElement("p2-v1-n0", p2Group);
   const restElement = createElement("rest", container);
@@ -108,7 +129,8 @@ function createInteractionHarness({ ambiguousChord = false, includeRest = false,
   };
   const tabNote = {
     sourceNote: { isRest() { return false; } },
-    getSVGGElement() { return tabWithoutGroup ? null : tabGroup; },
+    getSVGGElement() { return tabWithoutGroup || tabViaSvgId ? null : tabGroup; },
+    getSVGId() { return tabViaSvgId ? "auto1016" : undefined; },
     getNoteheadSVGs() { return []; },
   };
   const staff1 = { staffEntries: [{ graphicalVoiceEntries: [{ parentVoiceEntry: { ParentVoice: { VoiceId: 1 } }, notes: [graphicalNote(p1staff2v1n2, { group: staff2Group }), ...(includeTab ? [tabNote, ...(sharedTabGroup ? [{ ...tabNote }] : [])] : [])] }] }] };
@@ -348,6 +370,20 @@ test("TAB fret highlight uses its exact owned SVG group and remains reversible",
   assert.equal(harness.elements.tabGroup.classList.contains("student-playback-note"), false);
   assert.equal(harness.elements.tabGroup.getAttribute("data-st-score-highlight"), null);
   assert.equal(harness.elements.tabGroup.getAttribute("fill"), null);
+});
+
+test("TAB fret highlight resolves the unique VexFlow SVG id when OSMD omits its group element", async () => {
+  const harness = createInteractionHarness({ includeTab: true, tabViaSvgId: true });
+  await renderHarness(harness);
+
+  await harness.renderer.highlight({
+    target: { partId: "P1", measureIndex: 0, noteIndex: 3, voice: 1 },
+    className: "student-playback-note",
+  });
+
+  assert.equal(harness.elements.tabGroup.classList.contains("student-playback-note"), true);
+  assert.equal(harness.elements.tabGroup.getAttribute("data-st-score-highlight"), "true");
+  assert.equal(harness.elements.tabFret.getAttribute("fill"), "#ff8c00");
 });
 
 test("TAB fret highlight rejects a shared SVG group instead of coloring multiple notes", async () => {
