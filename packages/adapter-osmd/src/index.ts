@@ -464,7 +464,7 @@ export class OsmdRenderer implements ScoreRenderer {
     if (!HIGHLIGHT_CLASS_PATTERN.test(className)) {
       throw new Error("Highlight className must be one safe CSS class token of at most 64 characters.");
     }
-    const element = this.resolveRenderedNoteElement(highlight.target);
+    const element = this.#resolveHighlightElement(highlight.target);
     const existing = this.#highlighted.get(element);
     if (existing !== undefined) this.#restoreNoteHighlight(element, existing);
     const descendants = typeof element.querySelectorAll === "function"
@@ -709,6 +709,28 @@ export class OsmdRenderer implements ScoreRenderer {
     const group = note.getSVGGElement?.();
     const ElementConstructor = this.#container.ownerDocument.defaultView?.Element;
     return ElementConstructor !== undefined && group instanceof ElementConstructor ? group : null;
+  }
+
+  #resolveHighlightElement(target: ScoreNoteRef): Element {
+    const note = this.#resolveGraphicalNote(target);
+    const noteheads = note.getNoteheadSVGs?.();
+    if (!Array.isArray(noteheads) || noteheads.length > 0) {
+      return this.#resolveExactNoteheadElement(note);
+    }
+    if (this.#isRest(note)) {
+      return this.#resolveExactNoteheadElement(note);
+    }
+    const group = this.#resolveOwnedGraphicalGroup(note);
+    const owner = group === null ? undefined : this.#noteRefByElement.get(group);
+    if (
+      group !== null
+      && owner !== undefined
+      && isScoreNoteRefOwner(owner)
+      && sameScoreNoteRef(owner, target)
+    ) {
+      return group;
+    }
+    throw new Error("OSMD did not expose an unambiguous SVG highlight target for the selected note.");
   }
 
   #resolveElementOwnership(initial: Element): ElementOwnershipResult {

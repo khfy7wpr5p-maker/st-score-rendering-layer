@@ -332,6 +332,39 @@ test("highlight targets the exact locator and clear removes only renderer-owned 
   assert.equal(harness.elements.p1v1n1.classList.contains("consumer-owned"), true);
 });
 
+test("TAB fret highlight uses its exact owned SVG group and remains reversible", async () => {
+  const harness = createInteractionHarness({ includeTab: true });
+  await renderHarness(harness);
+  const target = { partId: "P1", measureIndex: 0, noteIndex: 3, voice: 1 };
+
+  await harness.renderer.highlight({ target, className: "student-playback-note" });
+
+  assert.equal(harness.elements.tabGroup.classList.contains("student-playback-note"), true);
+  assert.equal(harness.elements.tabGroup.getAttribute("data-st-score-highlight"), "true");
+  assert.equal(harness.elements.tabGroup.getAttribute("fill"), "#ff8c00");
+  assert.equal(harness.elements.p1staff2v1n2.classList.contains("student-playback-note"), false);
+
+  await harness.renderer.clearHighlights();
+  assert.equal(harness.elements.tabGroup.classList.contains("student-playback-note"), false);
+  assert.equal(harness.elements.tabGroup.getAttribute("data-st-score-highlight"), null);
+  assert.equal(harness.elements.tabGroup.getAttribute("fill"), null);
+});
+
+test("TAB fret highlight rejects a shared SVG group instead of coloring multiple notes", async () => {
+  const harness = createInteractionHarness({ includeTab: true, sharedTabGroup: true });
+  await renderHarness(harness);
+
+  await assert.rejects(
+    () => harness.renderer.highlight({
+      target: { partId: "P1", measureIndex: 0, noteIndex: 3, voice: 1 },
+      className: "student-playback-note",
+    }),
+    /unambiguous SVG highlight target/i,
+  );
+  assert.equal(harness.elements.tabGroup.getAttribute("data-st-score-highlight"), null);
+  assert.equal(harness.elements.tabFret.getAttribute("fill"), null);
+});
+
 test("multiple highlights are reversible and rerender clears stale presentation state", async () => {
   const harness = createInteractionHarness();
   await renderHarness(harness);
