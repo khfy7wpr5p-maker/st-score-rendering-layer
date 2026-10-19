@@ -20,6 +20,7 @@ interface OsmdInstrument { IdString: string; Visible: boolean; Staves: readonly 
 interface OsmdSourceNote { isRest?(): boolean; }
 interface OsmdGraphicalNote {
   getSVGGElement?(): Element | undefined;
+  getSVGId?(): string | undefined;
   getNoteheadSVGs?(): Element[];
   vfnoteIndex?: number;
   sourceNote?: OsmdSourceNote;
@@ -117,6 +118,7 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const MAX_HIT_TEST_NOTE_ELEMENTS = 200_000;
 const MAX_MEASURE_HIT_REGIONS = 100_000;
 const MEASURE_PART_ID_MAX_LENGTH = 128;
+const VEXFLOW_SVG_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const OSMD_SVG_UNITS_PER_UNIT = 10;
 const OSMD_SVG_PAGE_ID_PREFIX = "osmdSvgPage";
 const AMBIGUOUS_HIT_OWNER = "AMBIGUOUS" as const;
@@ -464,7 +466,7 @@ export class OsmdRenderer implements ScoreRenderer {
     if (!HIGHLIGHT_CLASS_PATTERN.test(className)) {
       throw new Error("Highlight className must be one safe CSS class token of at most 64 characters.");
     }
-    const element = this.resolveRenderedNoteElement(highlight.target);
+    const element = this.#resolveHighlightElement(highlight.target);
     const existing = this.#highlighted.get(element);
     if (existing !== undefined) this.#restoreNoteHighlight(element, existing);
     const descendants = typeof element.querySelectorAll === "function"
@@ -708,7 +710,38 @@ export class OsmdRenderer implements ScoreRenderer {
   #resolveOwnedGraphicalGroup(note: OsmdGraphicalNote): Element | null {
     const group = note.getSVGGElement?.();
     const ElementConstructor = this.#container.ownerDocument.defaultView?.Element;
-    return ElementConstructor !== undefined && group instanceof ElementConstructor ? group : null;
+    if (ElementConstructor !== undefined && group instanceof ElementConstructor) return group;
+
+    // OSMD 2.1.2's patched VexFlow TabNote opens an identified vf-tabnote
+    // group but does not save that element on the VexFlow note. Recover only
+    // the unique, container-scoped group for the exact internal VexFlow id.
+    const svgId = note.getSVGId?.();
+    if (typeof svgId !== "string" || !VEXFLOW_SVG_ID_PATTERN.test(svgId)) return null;
+    const matches = [...this.#container.querySelectorAll(`[id="vf-${svgId}"]`)]
+      .filter((candidate) => candidate.classList.contains("vf-tabnote"));
+    return matches.length === 1 ? matches[0] ?? null : null;
+  }
+
+  #resolveHighlightElement(target: ScoreNoteRef): Element {
+    const note = this.#resolveGraphicalNote(target);
+    const noteheads = note.getNoteheadSVGs?.();
+    if (!Array.isArray(noteheads) || noteheads.length > 0) {
+      return this.#resolveExactNoteheadElement(note);
+    }
+    if (this.#isRest(note)) {
+      return this.#resolveExactNoteheadElement(note);
+    }
+    const group = this.#resolveOwnedGraphicalGroup(note);
+    const owner = group === null ? undefined : this.#noteRefByElement.get(group);
+    if (
+      group !== null
+      && owner !== undefined
+      && isScoreNoteRefOwner(owner)
+      && sameScoreNoteRef(owner, target)
+    ) {
+      return group;
+    }
+    throw new Error("OSMD did not expose an unambiguous SVG highlight target for the selected note.");
   }
 
   #resolveElementOwnership(initial: Element): ElementOwnershipResult {

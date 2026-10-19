@@ -63,6 +63,42 @@
       if (!labels.includes("7") || !labels.includes("12")) {
         throw new Error(`TAB frets 7 and 12 missing: ${labels.join(",")}`);
       }
+      const highlightClass = "student-playback-note";
+      status.dataset.stage = "notation-highlight";
+      await host.highlight({
+        target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 1 },
+        className: highlightClass,
+      });
+      status.dataset.stage = "tab-highlight";
+      await host.highlight({
+        target: { partId: "P1", measureIndex: 0, noteIndex: 0, voice: 5 },
+        className: highlightClass,
+      });
+      const highlighted = [...svg.querySelectorAll('[data-st-score-highlight="true"]')];
+      if (highlighted.length !== 2) {
+        throw new Error(`Expected simultaneous notation and TAB highlights, got ${highlighted.length}`);
+      }
+      const tabHighlight = highlighted.find((element) =>
+        [element, ...element.querySelectorAll("text")]
+          .some((candidate) => candidate.textContent?.trim() === "7"),
+      );
+      if (!tabHighlight) throw new Error("TAB fret 7 did not receive the playback highlight");
+      const notationHighlight = highlighted.find((element) => element !== tabHighlight);
+      if (!notationHighlight || notationHighlight.querySelector("text") !== null) {
+        throw new Error("Notation staff note did not receive its independent playback highlight");
+      }
+      for (const element of highlighted) {
+        if (!element.classList.contains(highlightClass)) {
+          throw new Error("Playback highlight class is missing from a rendered target");
+        }
+        if (element.getAttribute("fill") !== "#ff8c00" || element.getAttribute("stroke") !== "#ff8c00") {
+          throw new Error("Rendered target did not receive the orange playback color");
+        }
+      }
+      await host.clearHighlights();
+      if (svg.querySelector('[data-st-score-highlight="true"]') !== null) {
+        throw new Error("Playback highlight clearing left stale notation or TAB state");
+      }
       status.dataset.renderPass = "true";
       status.textContent = "PILOT_TAB_PASS";
     } catch (error) {
