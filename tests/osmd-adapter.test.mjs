@@ -80,6 +80,60 @@ async function loadAndRender(renderer) {
   return renderer.render();
 }
 
+function createResizeHarness() {
+  let live;
+  const ref = voice => ({ partId: "P1", measureIndex: 0, noteIndex: 0, voice });
+  const container = {
+    ownerDocument: { defaultView: { Element: Object }, elementFromPoint: () => live.tab },
+    querySelectorAll: () => [], replaceChildren() {},
+  };
+  const engine = {
+    Sheet: { Instruments: [{ IdString: "P1", Visible: true, Staves: [{ idInMusicSheet: 0 }, { idInMusicSheet: 1 }] }] },
+    graphic: { measureList: [] },
+    async load() {}, setOptions() {},
+    render() {
+      live = { notation: createDomElement(), tab: createDomElement() };
+      const staff = (element, voice, tab) => ({ staffEntries: [{ graphicalVoiceEntries: [{
+        parentVoiceEntry: { ParentVoice: { VoiceId: voice } },
+        notes: [{ sourceNote: { isRest: () => false }, vfnoteIndex: 0,
+          getSVGGElement: () => element, getNoteheadSVGs: () => tab ? [] : [element] }],
+      }] }] });
+      for (const element of Object.values(live)) { element.parentElement = container; element.setAttribute("fill", "#111111"); }
+      this.graphic.measureList = [[staff(live.notation, 1, false), staff(live.tab, 5, true)]];
+    },
+  };
+  return { engine, renderer: new OsmdRenderer(container, () => engine), ref, get live() { return live; } };
+}
+
+test("automatic redraw preserves active notation and TAB colors and refreshes TAB hit ownership", async () => {
+  const h = createResizeHarness();
+  await loadAndRender(h.renderer);
+  await h.renderer.highlight({ target: h.ref(1) });
+  await h.renderer.highlight({ target: h.ref(5), className: "student-playback-note" });
+  const previous = h.live;
+  h.engine.render(); // OSMD autoResize calls its own render(), outside renderer.render().
+  assert.notEqual(h.live.tab, previous.tab, "the redraw must really replace SVG elements");
+  assert.equal(h.live.notation.getAttribute("fill"), "#ff8c00");
+  assert.equal(h.live.tab.getAttribute("fill"), "#ff8c00", "paused or held TAB note must stay orange without a new playback tick");
+  assert.equal(h.live.tab.classList.contains("student-playback-note"), true);
+  assert.deepEqual(h.renderer.resolveNoteAtClientPointDetailed({ clientX: 10, clientY: 10 }), { kind: "HIT", target: h.ref(5) });
+  await h.renderer.clearHighlights();
+  await h.renderer.highlight({ target: h.ref(5) });
+  assert.equal(h.live.tab.getAttribute("fill"), "#ff8c00", "later playback highlights must use the new ownership map");
+});
+
+test("cleared playback highlights never return on an automatic redraw", async () => {
+  const h = createResizeHarness();
+  await loadAndRender(h.renderer);
+  await h.renderer.highlight({ target: h.ref(5) });
+  await h.renderer.clearHighlights();
+  h.engine.render();
+  assert.equal(h.live.tab.getAttribute("fill"), "#111111");
+  assert.equal(h.live.tab.getAttribute("data-st-score-highlight"), null);
+  await h.renderer.highlight({ target: h.ref(5) });
+  assert.equal(h.live.tab.getAttribute("fill"), "#ff8c00");
+});
+
 test("OSMD adapter exposes only capabilities proven through R5", () => {
   const { renderer } = createHarness();
   for (const capability of ["musicxml-render", "svg-export", "cursor", "note-highlight", "part-visibility", "tablature"]) assert.equal(renderer.capabilities.has(capability), true);
