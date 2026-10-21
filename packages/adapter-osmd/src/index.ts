@@ -134,7 +134,7 @@ type IndexedGraphicalNote = Readonly<{
 type HitTestOwner = ScoreNoteRef | typeof AMBIGUOUS_HIT_OWNER | typeof NO_NOTE_HIT_OWNER;
 type RenderedEventHitOwner = OsmdRenderedEventTargetRef | typeof AMBIGUOUS_HIT_OWNER;
 type HighlightPaintSnapshot = Readonly<{ element: Element; fill: string | null; stroke: string | null }>;
-type NoteHighlightState = Readonly<{ className: string; painted: readonly HighlightPaintSnapshot[] }>;
+type NoteHighlightState = Readonly<{ target: ScoreNoteRef; className: string; painted: readonly HighlightPaintSnapshot[] }>;
 type ElementOwnershipResult = Readonly<{
   insideContainer: boolean;
   target?: ScoreNoteRef;
@@ -280,6 +280,7 @@ export class OsmdRenderer implements ScoreRenderer {
 
   async load(source: ScoreSource): Promise<void> {
     validateScoreSource(source);
+    this.#rendered = false;
     await this.clearHighlights();
     await this.clearMeasureHighlights();
     this.#resetHitTestIndex();
@@ -301,6 +302,7 @@ export class OsmdRenderer implements ScoreRenderer {
       drawComposer: options.drawComposer ?? true,
       pageFormat: options.pageMode === "page" ? "A4 P" : "Endless",
     });
+    this.#rendered = false;
     osmd.render();
     this.#rendered = true;
     try {
@@ -462,6 +464,10 @@ export class OsmdRenderer implements ScoreRenderer {
 
   async highlight(highlight: ScoreHighlight): Promise<void> {
     this.#requireRendered("highlight()");
+    this.#paintHighlight(highlight);
+  }
+
+  #paintHighlight(highlight: ScoreHighlight): void {
     const className = highlight.className ?? DEFAULT_HIGHLIGHT_CLASS;
     if (!HIGHLIGHT_CLASS_PATTERN.test(className)) {
       throw new Error("Highlight className must be one safe CSS class token of at most 64 characters.");
@@ -483,7 +489,7 @@ export class OsmdRenderer implements ScoreRenderer {
       target.element.setAttribute("fill", "#ff8c00");
       target.element.setAttribute("stroke", "#ff8c00");
     }
-    this.#highlighted.set(element, Object.freeze({ className, painted: Object.freeze(painted) }));
+    this.#highlighted.set(element, Object.freeze({ target: Object.freeze({ ...highlight.target }), className, painted: Object.freeze(painted) }));
   }
 
   async clearHighlights(): Promise<void> {
@@ -595,6 +601,7 @@ export class OsmdRenderer implements ScoreRenderer {
     instrument.Visible = visible;
     if (!osmd.updateGraphic) throw new Error("OSMD updateGraphic() is unavailable for part visibility changes.");
     osmd.updateGraphic();
+    this.#rendered = false;
     osmd.render();
     this.#rendered = true;
     try {
@@ -607,6 +614,7 @@ export class OsmdRenderer implements ScoreRenderer {
   }
 
   async dispose(): Promise<void> {
+    this.#rendered = false;
     await this.clearHighlights();
     await this.clearMeasureHighlights();
     this.#resetHitTestIndex();
@@ -617,7 +625,43 @@ export class OsmdRenderer implements ScoreRenderer {
   }
 
   #ensureOsmd(): OsmdEngine {
-    if (this.#osmd === undefined) this.#osmd = this.#factory(this.#container);
+    if (this.#osmd === undefined) {
+      const osmd = this.#factory(this.#container);
+      const render = osmd.render.bind(osmd);
+      // OSMD autoResize calls its own render(), bypassing this adapter's render().
+      // Observe that instance boundary so new SVGs receive fresh ownership and
+      // held/paused highlights, even without another playback position update.
+      osmd.render = () => {
+        if (this.#osmd !== osmd) return;
+        const highlights = this.#rendered ? [...this.#highlighted.values()] : null;
+        if (highlights !== null) {
+          this.#rendered = false;
+          for (const [element, state] of this.#highlighted) this.#restoreNoteHighlight(element, state);
+          this.#highlighted.clear();
+          this.#resetHitTestIndex();
+        }
+        render();
+        if (highlights === null) return; // Explicit renders refresh their indexes below.
+        try {
+          this.#rebuildHitTestIndex();
+          this.#rendered = true;
+        } catch (error) {
+          this.#resetHitTestIndex();
+          throw error;
+        }
+        for (const highlight of highlights) {
+          try {
+            this.#paintHighlight(highlight);
+          } catch {
+            // Never partially restore an ambiguous/stale set after a redraw.
+            for (const [element, state] of this.#highlighted) this.#restoreNoteHighlight(element, state);
+            this.#highlighted.clear();
+            break;
+          }
+        }
+      };
+      this.#osmd = osmd;
+    }
     return this.#osmd;
   }
 
