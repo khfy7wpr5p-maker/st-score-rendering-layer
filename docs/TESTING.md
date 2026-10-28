@@ -84,10 +84,13 @@ The headless adapter also exposes `digestSvgPages()` for deterministic SVG page 
 | measure cursor | OSMD adapter/browser host/runtime bridge | adapter + browser-host/workstation cursor tests | PROTECTED |
 | deterministic `ScoreNoteRef` traversal | OSMD adapter | `note-interaction.test.mjs`, real interaction fixture | PROTECTED |
 | exact notehead identity | OSMD adapter | chord research + interaction fixtures | PROTECTED |
+| exact noteheadless TAB fret-group ownership | OSMD adapter | `note-interaction.test.mjs` + TAB host fixture | PROTECTED |
 | unique graphical-group mobile touch ownership | OSMD adapter | unit + Chromium + WebKit interaction gates; PR #16 real-device acceptance | MULTI-ENGINE PROTECTED |
 | ambiguous/shared group abstention | OSMD adapter | unit + Chromium + WebKit interaction gates | MULTI-ENGINE PROTECTED |
 | no nearest-note/pitch inference | OSMD adapter | `note-interaction.test.mjs` | PROTECTED |
 | highlight is reversible presentation state | OSMD adapter | adapter + interaction tests | PROTECTED |
+| exact measure highlight is reversible presentation overlay | OSMD adapter/browser host/runtime | adapter, browser-host, runtime and Chromium/WebKit interaction fixtures | MULTI-ENGINE PROTECTED |
+| automatic OSMD redraw rebuilds ownership and restores active note/TAB highlights | OSMD adapter | `osmd-adapter.test.mjs` SVG-replacement regression | PROTECTED |
 | replacement render invalidates old presentation evidence | BrowserScoreHost + OSMD adapter | unit + Chromium + WebKit interaction gates | MULTI-ENGINE PROTECTED |
 | standard notation + 6-line TAB | OSMD/browser fixture | `osmd-tablature-fixture.html` | PROTECTED |
 | string/fret display evidence | OSMD/browser fixture | fret `7`/`12` assertions | PROTECTED |
