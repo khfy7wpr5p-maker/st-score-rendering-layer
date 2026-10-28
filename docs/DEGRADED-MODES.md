@@ -45,16 +45,18 @@ Unknown/unsupported MusicXML notation is vendor behavior unless a feature is exp
 
 ## Interaction-degraded states
 
-A successfully rendered score can still have a local note interaction result of `null`.
+A successfully rendered score can still have a local note interaction MISS or a measure interaction MISS.
 
 Expected fail-closed examples:
 
 - rest target;
 - shared/ambiguous graphical group;
 - duplicate exact notehead ownership;
-- staff/measure whitespace;
+- staff/measure whitespace for NOTE hit-testing (the same point may still be a valid measure HIT);
 - unmapped SVG element;
 - point outside the renderer container.
+
+Measure-specific fail-closed results also include `NO_MEASURE_OWNER`, conflicting different-target overlap and `MEASURE_GEOMETRY_UNAVAILABLE` for missing/untrusted page geometry or transforms.
 
 This does not invalidate the whole rendered score.
 
@@ -119,7 +121,9 @@ For incomplete OMR, the renderer must not be used as an implicit audio lock. The
 Where the production contracts permit it, failure of a subordinate feature should not be promoted into unrelated application failure:
 
 - a `null` note hit should not invalidate rendering;
-- unavailable highlight should not redefine canonical score validity;
+- unavailable note/measure highlight should not redefine canonical score validity;
+- failure to rebind one active note/TAB highlight after an automatic redraw clears the partial restored set but does not turn a successful OSMD redraw into canonical score mutation;
+- measure overlays are reapplied from consumer state rather than guessed after automatic redraw;
 - headless lack of cursor should not invalidate SVG output;
 - renderer failure should not automatically disable independent playback;
 - accessibility overlay failure should not mutate source/canonical data.
