@@ -2,7 +2,7 @@
 
 ## Authority
 
-This layer is presentation-only. The renderer owns rendered-note hit-testing, structured rendered-hit diagnostics and reversible highlight state; the consumer owns canonical musical identity, selected-note application state and edit authority.
+This layer is presentation-only. The renderer owns rendered-note/event/measure hit-testing, structured current-render diagnostics and reversible note/measure highlight state; the consumer owns canonical musical identity, selected-note application state, edit authority and playback decisions.
 
 The renderer does **not** own pitch, duration, octave, voice correctness, tie/tuplet correction, OMR truth, teacher approval, `SemanticAddress`, canonical mutation, panel/keypad state or playback authorization.
 
@@ -19,6 +19,8 @@ The renderer does not register `pointerdown`, `touchstart`, `click` or gesture l
 ```ts
 host.hitTestNote({ clientX: event.clientX, clientY: event.clientY })
 host.hitTestNoteDetailed({ clientX: event.clientX, clientY: event.clientY })
+host.hitTestRenderedEventDetailed({ clientX: event.clientX, clientY: event.clientY })
+host.hitTestMeasureDetailed({ clientX: event.clientX, clientY: event.clientY })
 ```
 
 Gesture policy, touch-action policy, selection/deselection and application callbacks remain consumer responsibilities.
@@ -98,7 +100,7 @@ The adapter accepts CSS-pixel viewport coordinates and calls:
 document.elementFromPoint(clientX, clientY)
 ```
 
-It walks DOM ancestry only until the renderer container. It performs no custom scroll-offset, device-pixel-ratio, browser/pinch zoom, SVG transform or score-space conversion.
+For note/event DOM ownership, it walks ancestry only until the renderer container and performs no custom scroll-offset, device-pixel-ratio, browser/pinch zoom, SVG transform or score-space conversion. Measure targeting is separate: it projects the fresh client point through the matching current SVG page transform into OSMD measure units.
 
 ## Exact notehead and graphical-group ownership
 
@@ -107,6 +109,8 @@ The pinned OSMD `2.1.2` adapter uses `getNoteheadSVGs()`, `vfnoteIndex` and `get
 The notehead remains the strongest exact identity target. Chord members may share a graphical group while having distinct noteheads, so an exact notehead descendant can resolve successfully even when a broader ancestor is ambiguous.
 
 A uniquely owned graphical note group may widen touch ownership to stem/flag/dot/other descendants of that same group. If multiple notes claim the group, a group-only hit abstains.
+
+OSMD/VexFlow guitar-TAB frets can render as text without notehead elements. For that case only, the adapter resolves the unique container-scoped `vf-tabnote` group for the exact validated internal VexFlow id. Missing, duplicate or conflicting groups abstain; the renderer never selects a nearby fret label.
 
 For a single pitched graphical note, if `vfnoteIndex` is unavailable but `getNoteheadSVGs()` exposes exactly one element, index `0` is accepted as an unambiguous same-notehead fallback. Multi-note cases require a valid exact notehead index or fail closed. Graphical rests are excluded from note interaction.
 
@@ -120,10 +124,14 @@ host.hitTestNote({ clientX, clientY })
 // ScoreNoteRef | null
 
 host.hitTestNoteDetailed({ clientX, clientY })
+host.hitTestRenderedEventDetailed({ clientX, clientY })
+host.hitTestMeasureDetailed({ clientX, clientY })
 // { kind, renderEpoch, sourceId?, target? / reason? }
 
 await host.highlight({ target: scoreNoteRef, className? })
 await host.clearHighlights()
+await host.highlightMeasure({ target: scoreMeasureRef, className? })
+await host.clearMeasureHighlights()
 ```
 
 Detailed evidence is tied to the active successful render epoch. Every successful replacement advances the epoch. Validation/load/render failure, reset and dispose invalidate prior active evidence.
@@ -150,11 +158,13 @@ current physical event
 → highlight(current ScoreNoteRef)
 ```
 
-A rerender clears renderer-owned highlight/index/DOM state and advances render-generation evidence. The same logical rendered note may produce an equal `ScoreNoteRef` after rerender, but old detailed evidence and old DOM are stale. The consumer performs deterministic current-revision rebind; the renderer does not automatically restore canonical selection.
+A deliberate `BrowserScoreHost` replacement render clears renderer-owned highlight/index/DOM state and advances `renderEpoch`. The same logical rendered note may produce an equal `ScoreNoteRef` after replacement, but old detailed evidence and old DOM are stale. The consumer performs deterministic current-revision rebind; the renderer does not restore canonical selection.
+
+OSMD `autoResize` is a different lifecycle: OSMD may redraw SVG inside the same successful host render epoch. The adapter observes that vendor redraw, rebuilds note/event/measure ownership and best-effort reapplies active note/TAB highlights to the new elements. If any active target cannot be rebound unambiguously, the adapter clears the partially restored note-highlight set. Measure overlays are not automatically restored and must be reapplied by the consumer when required.
 
 ## Runtime bridge
 
-Interaction-capable exported runtimes expose bounded presentation operations through `globalThis.__ST_SCORE_RENDER_HOST__`, including `hitTestNote()`, additive `hitTestNoteDetailed()`, `highlight()` and `clearHighlights()`.
+Interaction-capable exported runtimes expose bounded presentation operations through `globalThis.__ST_SCORE_RENDER_HOST__`, including note/event/measure hit-test methods plus `highlight()`, `clearHighlights()`, `highlightMeasure()` and `clearMeasureHighlights()`.
 
 Runtime payloads fail closed on malformed/non-plain objects, unknown fields, non-finite coordinates, unsafe part IDs, unsafe integer locators and unsafe highlight class tokens. The runtime exposes no consumer DOM traversal primitive, OSMD model object or editor mutation operation.
 
@@ -228,3 +238,9 @@ Ownership rules:
 - missing/duplicate/untrusted page mapping or transform → `MEASURE_GEOMETRY_UNAVAILABLE`.
 
 There is no arbitrary hit radius, nearest-measure fallback, z-order tie-break, pitch/duration inference or consumer-side SVG scraping.
+
+## Measure highlight presentation (SES-106)
+
+`OsmdRenderer.highlightMeasure()` draws a reversible renderer-owned SVG overlay for one exact current-render `{ partId, measureIndex }`. Same-target staff regions may produce multiple rectangles in that overlay; missing geometry, unsafe identifiers and unavailable page ownership fail closed. `BrowserScoreHost` and generated runtimes expose `highlightMeasure()` and `clearMeasureHighlights()` as additive revision-specific methods.
+
+The overlay is presentation-only: it does not mutate MusicXML, establish correction truth or grant automatic edit authority. Deliberate render/load/part-visibility changes clear it. OSMD automatic redraw recovery currently restores active note/TAB highlights only, so a consumer that still requires measure presentation after such a redraw must reapply it from its own current state.

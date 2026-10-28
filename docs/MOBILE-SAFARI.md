@@ -65,9 +65,11 @@ A chord/shared group remains ambiguous and abstains unless the actual hit descen
 
 `ScoreRenderOptions.autoResize` is forwarded to OSMD and defaults to `true` in the browser adapter.
 
-There is no ST-owned `ResizeObserver`, `orientationchange` listener, `visualViewport` listener, font/resource-load reflow controller, resize debounce/throttle or canonical selection-restoration hook.
+There is no ST-owned `ResizeObserver`, `orientationchange` listener, `visualViewport` listener, font/resource-load reflow controller, resize debounce/throttle or canonical selection-restoration hook. OSMD owns the resize trigger.
 
-A successful replacement render advances the BrowserScoreHost `renderEpoch`. Old hit evidence is stale even if a later render produces an equal `ScoreNoteRef`. Validation/render failure and dispose also invalidate active evidence.
+The adapter does observe OSMD's own redraw call. After an automatic redraw it invalidates old DOM ownership, rebuilds note/event/measure indexes and best-effort reapplies active note/TAB highlights. It does not restore consumer canonical selection or measure overlays.
+
+A successful deliberate replacement render advances the BrowserScoreHost `renderEpoch`. Old hit evidence is stale even if a later render produces an equal `ScoreNoteRef`. Validation/render failure and dispose also invalidate active evidence. An OSMD-internal automatic redraw stays inside the same successful host epoch, so consumers still pass fresh event coordinates and keep canonical state outside the renderer.
 
 If a host needs deterministic fixed geometry for a particular surface, it can render with `autoResize: false` and explicitly own replacement/reflow timing. That is a host integration choice and must be validated on the target application.
 
@@ -134,11 +136,13 @@ A consumer should verify on the actual host surface that:
 6. old hit evidence is rejected and current canonical-to-render mapping is used for rebind;
 7. renderer MISS, canonical-map MISS and panel/tab state failure are logged as separate classes;
 8. playback controls remain governed by the consumer playback subsystem, not renderer interaction readiness;
-9. real Safari tests cover tap, chord ambiguity, scrolling, orientation and replacement render behavior.
+9. active note/TAB presentation survives an OSMD automatic redraw when targets still resolve uniquely;
+10. required measure overlays are reapplied from consumer state after automatic redraw;
+11. real Safari tests cover tap, chord ambiguity, scrolling, orientation and replacement/automatic redraw behavior.
 
 ## Architecture status
 
-Mobile note hit-testing is production-implemented through browser-generic deterministic DOM ownership. Repository automation covers Chromium and an exact-pinned Playwright WebKit engine for bounded renderer interaction evidence. Safari-specific host lifecycle, browser chrome, gesture and safe-area behavior remains a physical-device/consumer integration acceptance concern.
+Mobile note/TAB and measure hit-testing is production-implemented through browser-generic deterministic ownership. Automatic redraw recovery is adapter-owned for current indexes and active note/TAB highlights, while canonical selection and measure-overlay reapplication remain consumer-owned. Repository automation covers Chromium and an exact-pinned Playwright WebKit engine for bounded renderer interaction evidence. Safari-specific host lifecycle, browser chrome, gesture and safe-area behavior remains a physical-device/consumer integration acceptance concern.
 
 
 ## Measure hit-test mobile evidence

@@ -106,12 +106,16 @@ exportSvg()
 moveCursor(target)
 hitTestNote({ clientX, clientY })
 hitTestNoteDetailed({ clientX, clientY })
+hitTestRenderedEventDetailed({ clientX, clientY })
+hitTestMeasureDetailed({ clientX, clientY })
 highlight({ target, className? })
 clearHighlights()
+highlightMeasure({ target, className? })
+clearMeasureHighlights()
 dispose()
 ```
 
-Current exported browser-host evidence types include `BrowserNoteHitMissReason`, `BrowserRenderEpoch`, `BrowserRenderResult`, `BrowserRenderedHitEvidence`, `BrowserRenderedHitMiss` and `BrowserNoteHitDetailedResult`.
+Current exported browser-host evidence types cover note hits, NOTE/REST rendered-event hits and measure hits, including bounded HIT/MISS reasons, opaque `BrowserRenderEpoch` evidence and optional bounded `sourceId`.
 
 ### Legacy `hitTestNote`
 
@@ -147,9 +151,13 @@ Renderer results are normalized to plain bounded data. DOM elements, OSMD object
 
 A consumer must compare the returned epoch with its current successful render before canonical resolution. A renderer HIT still requires a consumer/Editor Core canonical mapping step.
 
+### Rendered event and measure hit-test
+
+`hitTestRenderedEventDetailed()` distinguishes NOTE and REST presentation targets without turning them into canonical events. `hitTestMeasureDetailed()` returns one current-render `{ partId, measureIndex }` or a bounded MISS reason. Both are additive, normalized, epoch-bound and feature-detected.
+
 ### Highlight
 
-`highlight()` requires the renderer's `note-highlight` capability and delegates a current-render `ScoreNoteRef`. Highlight state is presentation-only and does not mean that the host owns a selected-note model.
+`highlight()` requires the renderer's `note-highlight` capability and delegates a current-render `ScoreNoteRef`. `highlightMeasure()` and `clearMeasureHighlights()` feature-detect the adapter's additive measure-overlay extension. Highlight state is presentation-only and does not mean that the host owns a selected-note, correction or playback model.
 
 ### Cursor
 
@@ -161,7 +169,7 @@ There are two build-time runtime outputs on top of the same browser-host boundar
 
 ### Workstation runtime
 
-Built by `scripts/export-workstation-runtime-with-cursor.mjs`. It contains local ST modules, the exact OSMD browser bundle, integrity/provenance manifest data, the Workstation bridge, cursor and note-interaction operations.
+Built by `scripts/export-workstation-runtime-with-cursor.mjs`. It contains local ST modules, the exact OSMD browser bundle, integrity/provenance manifest data, the Workstation bridge, cursor, note/event/measure interaction and note/measure highlight operations.
 
 ### Generic browser runtime
 
@@ -189,8 +197,12 @@ exportSvg()
 moveCursor(payload)
 hitTestNote(payload)
 hitTestNoteDetailed(payload)
+hitTestRenderedEventDetailed(payload)
+hitTestMeasureDetailed(payload)
 highlight(payload)
 clearHighlights()
+highlightMeasure(payload)
+clearMeasureHighlights()
 dispose()
 ```
 
@@ -219,6 +231,8 @@ Renderer MISS, stale epoch, canonical-map MISS and consumer UI state failure are
 ## Resize and mobile behavior
 
 `ScoreRenderOptions.autoResize` is passed to the adapter/OSMD. The browser host itself contains no `ResizeObserver`, pointer/touch listener, orientation listener or mobile-specific coordinate conversion.
+
+When OSMD invokes its own `render()` for automatic resize, the adapter rebuilds current note/event/measure ownership and best-effort reapplies active note/TAB highlights. This internal redraw does not advance the host `renderEpoch`, restore consumer canonical selection or restore measure overlays.
 
 Hosts bind user events and pass fresh `clientX/clientY` coordinates. Repository CI exercises the bounded interaction fixture in Chromium and the exact-pinned Playwright WebKit engine. WebKit engine success is not physical iPhone/Safari acceptance.
 
