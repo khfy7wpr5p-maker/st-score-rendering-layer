@@ -195,7 +195,7 @@ flowchart LR
   Event --> Client --> Browser --> DOM --> Map --> Ref
 ```
 
-The browser therefore accounts for current scrolling and rendered CSS/SVG transforms when resolving the DOM hit. This repository performs no manual scroll-offset, device-pixel-ratio, pinch-zoom or score-space calculation.
+For the note/event DOM-hit path, the browser accounts for current scrolling and rendered CSS/SVG transforms when resolving the element. That path performs no manual scroll-offset, device-pixel-ratio, pinch-zoom or score-space calculation. Measure targeting is separate and performs the bounded live SVG-page projection described below.
 
 ### Visual geometry vs interaction geometry
 
