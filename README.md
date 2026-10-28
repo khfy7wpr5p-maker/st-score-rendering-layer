@@ -12,10 +12,11 @@ The repository currently provides:
 - shared source validation and renderer lifecycle utilities (`@st/score-renderer-core`);
 - interactive browser rendering through the OSMD adapter;
 - deterministic headless SVG rendering for CI/visual QA;
-- browser-host APIs for render, SVG export, measure cursor, exact note hit-test and highlight;
+- browser-host APIs for render, SVG export, measure cursor, deterministic note/event/measure hit-test and reversible note/measure highlight;
 - a reversible accessibility overlay;
 - renderer-owned Workstation and generic browser runtime exports with manifest/integrity metadata;
 - validated standard-notation + guitar-TAB rendering, including string/fret display evidence;
+- automatic OSMD redraw recovery that rebuilds current DOM ownership and reapplies active note/TAB highlights;
 - automated Chromium and WebKit engine regression evidence for the bounded renderer interaction path.
 
 ## What this repository does not do
@@ -36,7 +37,7 @@ flowchart TD
   O --> Core[renderer-core validation]
   O --> OSMD[OpenSheetMusicDisplay 2.1.2]
   OSMD --> SVG[SVG DOM]
-  SVG --> I[Renderer-owned note interaction index]
+  SVG --> I[Renderer-owned note/TAB ownership + measure geometry]
   I --> BH
 ```
 
@@ -48,7 +49,11 @@ For the complete production-reality architecture, see [docs/ARCHITECTURE.md](doc
 
 The renderer does **not** bind touch/pointer listeners. A host supplies browser `clientX/clientY` coordinates to `hitTestNote()`.
 
-The OSMD adapter resolves the browser hit through `document.elementFromPoint()` and a renderer-owned DOM-to-`ScoreNoteRef` index. Exact noteheads are strongest identity targets; a uniquely owned graphical-note group may widen touch ownership to its stem/flag/dot descendants. Shared/ambiguous groups fail closed. There is no nearest-note search, pitch matching, radius expansion or consumer-side SVG scraping.
+The OSMD adapter resolves NOTE/REST hits through `document.elementFromPoint()` and renderer-owned DOM ownership maps. Exact noteheads are strongest identity targets; a uniquely owned graphical-note group may widen touch ownership to its stem/flag/dot descendants. Noteheadless guitar-TAB targets use exact OSMD/VexFlow graphical-group identity. Shared or ambiguous ownership fails closed.
+
+Measure targeting is separate: the adapter indexes current OSMD `GraphicalMeasure.PositionAndShape` geometry, projects fresh client coordinates through the correct owned SVG page transform and returns a measure only for one unique current-render owner. Reversible measure highlights are presentation overlays and do not mutate MusicXML or grant correction authority. There is no nearest-note/nearest-measure search, pitch matching, radius expansion or consumer-side SVG scraping.
+
+OSMD `autoResize` may redraw SVG outside an explicit `BrowserScoreHost` replacement render. The adapter observes that vendor redraw boundary, rebuilds note/TAB/measure ownership and best-effort reapplies active note/TAB highlights. Consumer selection and canonical identity remain outside the renderer; measure overlays are not claimed to survive an automatic redraw.
 
 See [docs/NOTE-INTERACTION.md](docs/NOTE-INTERACTION.md) and [docs/MOBILE-SAFARI.md](docs/MOBILE-SAFARI.md).
 
