@@ -100,7 +100,7 @@ The adapter accepts CSS-pixel viewport coordinates and calls:
 document.elementFromPoint(clientX, clientY)
 ```
 
-It walks DOM ancestry only until the renderer container. It performs no custom scroll-offset, device-pixel-ratio, browser/pinch zoom, SVG transform or score-space conversion.
+For note/event DOM ownership, it walks ancestry only until the renderer container and performs no custom scroll-offset, device-pixel-ratio, browser/pinch zoom, SVG transform or score-space conversion. Measure targeting is separate: it projects the fresh client point through the matching current SVG page transform into OSMD measure units.
 
 ## Exact notehead and graphical-group ownership
 
