@@ -75,6 +75,8 @@ Exports include:
 - `BrowserRenderedHitEvidence`;
 - `BrowserRenderedHitMiss`;
 - `BrowserNoteHitDetailedResult`;
+- `BrowserRenderedEventTargetKind`, `BrowserRenderedEventTargetRef`, rendered-event HIT/MISS types and `BrowserRenderedEventHitDetailedResult`;
+- `BrowserMeasureHitTargetRef`, `BrowserMeasureHitMissReason`, measure HIT/MISS types and `BrowserMeasureHitDetailedResult`;
 - `BrowserScoreHostOptions`;
 - `ScoreRendererContractVersionMismatchError`;
 - `BrowserScoreHostUnavailableError`;
@@ -88,14 +90,18 @@ exportSvg()
 moveCursor(target)
 hitTestNote(point)
 hitTestNoteDetailed(point)
+hitTestRenderedEventDetailed(point)
+hitTestMeasureDetailed(point)
 highlight(highlight)
 clearHighlights()
+highlightMeasure(highlight)
+clearMeasureHighlights()
 dispose()
 ```
 
 A successful `renderMusicXml()` returns `BrowserRenderResult`, which extends the renderer result with opaque `renderEpoch` and optional bounded `sourceId` evidence.
 
-`hitTestNoteDetailed()` returns current-render HIT/MISS evidence. It does not expose DOM/OSMD objects and does not resolve canonical score identity.
+`hitTestNoteDetailed()`, `hitTestRenderedEventDetailed()` and `hitTestMeasureDetailed()` return current-render normalized HIT/MISS evidence. Note and measure highlight methods expose reversible presentation only. None exposes DOM/OSMD objects or resolves canonical score identity.
 
 No browser-host method exposes a canonical score model, playback controller, filesystem/network loader or editor mutation API.
 
@@ -125,12 +131,16 @@ exportSvg()
 moveCursor(payload)
 hitTestNote(payload)
 hitTestNoteDetailed(payload)
+hitTestRenderedEventDetailed(payload)
+hitTestMeasureDetailed(payload)
 highlight(payload)
 clearHighlights()
+highlightMeasure(payload)
+clearMeasureHighlights()
 dispose()
 ```
 
-`renderMusicXml(payload)` returns the host result including `renderEpoch` and optional bounded `sourceId`. `hitTestNoteDetailed(payload)` accepts only an exact plain `{ clientX, clientY }` payload with finite numbers and returns normalized epoch-bound HIT/MISS data.
+`renderMusicXml(payload)` returns the host result including `renderEpoch` and optional bounded `sourceId`. Detailed note/event/measure hit methods accept only an exact plain `{ clientX, clientY }` payload with finite numbers and return normalized epoch-bound HIT/MISS data. Highlight payloads require bounded exact locators and safe optional class tokens.
 
 The runtime dispatches `st-score-render-host-ready` with the renderer contract version.
 
@@ -160,9 +170,10 @@ The exact-pinned `playwright: 1.62.1` dependency is development/test tooling for
 | ST package `.` exports | PUBLIC WITHIN PRIVATE WORKSPACE/DISTRIBUTION |
 | `SCORE_RENDERER_CONTRACT_VERSION` | PUBLIC RUNTIME CONTRACT |
 | `BrowserScoreHost` | PUBLIC CONSUMER-FACING BROWSER BOUNDARY |
-| `BrowserRenderResult` / detailed hit evidence types | ADDITIVE REVISION-SPECIFIC BROWSER-HOST EXTENSION |
+| `BrowserRenderResult` / detailed note-event-measure evidence types | ADDITIVE REVISION-SPECIFIC BROWSER-HOST EXTENSION |
+| `BrowserScoreHost.hitTestMeasureDetailed` / measure highlight methods | ADDITIVE REVISION-SPECIFIC BROWSER-HOST EXTENSION |
 | `__ST_SCORE_RENDER_HOST__` | PUBLIC EXPORTED-RUNTIME BOUNDARY |
-| `hitTestNoteDetailed` runtime method | ADDITIVE REVISION-SPECIFIC RUNTIME EXTENSION |
+| detailed note/event/measure hit and measure highlight runtime methods | ADDITIVE REVISION-SPECIFIC RUNTIME EXTENSION |
 | `OsmdRenderer.resolveNoteAtClientPoint*` | ADAPTER-SPECIFIC EXTENSION |
 | `OsmdRenderer.resolveRenderedNoteElement` | RENDERED-TARGET EXTENSION; NOT CANONICAL IDENTITY |
 | OSMD `graphic`, `Sheet`, graphical objects | INTERNAL VENDOR DETAIL |
@@ -176,7 +187,7 @@ See [SESLITAB-DIAGNOSTIC-HANDOFF.md](SESLITAB-DIAGNOSTIC-HANDOFF.md) and [EDITOR
 
 ## Versioning
 
-Private package version `0.1.0` and runtime contract `0.2.0` intentionally coexist. The detailed hit/render-epoch APIs are additive revision-specific extensions; consumers requiring them must feature-detect and pin/verify an exact renderer revision/runtime manifest rather than inferring availability from `0.2.0` alone.
+Private package version `0.1.0` and runtime contract `0.2.0` intentionally coexist. Detailed note/event/measure hit, render-epoch and measure-highlight APIs are additive revision-specific extensions; consumers requiring them must feature-detect and pin/verify an exact renderer revision/runtime manifest rather than inferring availability from `0.2.0` alone.
 
 See [VERSIONING.md](VERSIONING.md).
 
@@ -194,3 +205,12 @@ A HIT returns current presentation evidence plus the renderer locator `{ partId,
 “Tap anywhere in a measure” means the exact current OSMD `GraphicalMeasure.PositionAndShape` border rectangle for the rendered staff region. Noteheads, rests and genuine measure whitespace inside that rectangle are eligible. Page margins, inter-system whitespace and nearby SVG content are not assigned by proximity.
 
 The implementation is fail-closed: conflicting different measure owners, missing/untrusted geometry, missing/ambiguous page identity, malformed coordinates and renderer-outside points do not guess a measure. Existing NOTE/REST hit-test APIs keep their previous semantics.
+
+Revision-pinned consumers may also feature-detect:
+
+```ts
+highlightMeasure({ target: { partId, measureIndex }, className? })
+clearMeasureHighlights()
+```
+
+These methods create and remove renderer-owned SVG presentation overlays only. They do not mutate source/canonical data, authorize correction or persist through replacement renders. Current OSMD automatic-redraw recovery restores note/TAB highlights, not measure overlays.
