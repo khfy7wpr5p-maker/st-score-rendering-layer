@@ -29,11 +29,12 @@ The production browser renderer uses OpenSheetMusicDisplay (OSMD) `2.1.2` with a
 - MusicXML-to-SVG presentation through the OSMD adapter;
 - SVG export;
 - measure cursor delegation;
-- note highlight presentation state;
+- reversible note and measure highlight presentation state;
 - deterministic rendered-note location (`ScoreNoteRef`);
-- browser client-point hit-testing against rendered notes;
+- browser client-point hit-testing against rendered notes/events and graphical measures;
 - part visibility delegation;
-- validated guitar TAB presentation capability;
+- validated guitar TAB presentation capability, including exact noteheadless fret-group ownership;
+- automatic OSMD redraw recovery for current ownership indexes and active note/TAB highlights;
 - headless Chrome/Chromium SVG rendering and deterministic digest support;
 - reversible accessibility metadata overlay;
 - ST-owned browser/Workstation runtime asset export.
@@ -64,7 +65,7 @@ flowchart TD
   Adapter[@st/score-renderer-osmd]
   Vendor[OpenSheetMusicDisplay 2.1.2]
   SVG[SVG DOM in owned container]
-  Interaction[DOM ownership / hit-test index]
+  Interaction[Note/event DOM ownership + measure geometry index]
   A11y[@st/score-renderer-accessibility]
 
   Consumer --> Runtime
@@ -95,7 +96,7 @@ flowchart LR
   OSMDLoad[OSMD load / vendor parse]
   Render[OsmdRenderer.render]
   Layout[OSMD layout + SVG rendering]
-  Index[rebuildHitTestIndex]
+  Index[rebuild note/event + measure indexes]
   Output[Rendered SVG DOM]
 
   XML --> Validate --> Host --> Load --> OSMDLoad --> Render --> Layout --> Output --> Index
@@ -172,7 +173,7 @@ OSMD produces the SVG DOM. `exportSvg()` serializes the SVG elements currently i
 
 ## 7. Coordinate model
 
-There is no ST-owned score-coordinate transform pipeline.
+Note/event hit-testing uses browser viewport coordinates and DOM ownership. Measure hit-testing additionally uses current OSMD graphical-measure geometry and the live transform of the correct renderer-owned SVG page. There is no consumer-visible general score-coordinate transform API.
 
 The interaction API accepts browser viewport coordinates:
 
@@ -205,9 +206,11 @@ The browser therefore accounts for current scrolling and rendered CSS/SVG transf
 - exact notehead element; and
 - when uniquely owned, the graphical-note group and descendants such as stem/flag/dot.
 
-Interaction geometry is therefore not identical to the visible notehead, but it is also not an arbitrary expanded bounding box. Shared graphical groups fail closed. There is no radius/nearest-note fallback.
+Interaction geometry is therefore not identical to the visible notehead, but it is also not an arbitrary expanded bounding box. Noteheadless guitar-TAB targets use the exact graphical/VexFlow group identity exposed by OSMD. Shared graphical groups fail closed.
 
-## 8. Note interaction architecture
+Measure interaction geometry is a bounded current-render index of validated `GraphicalMeasure.PositionAndShape` rectangles. A fresh client point is projected through the matching SVG page's live `getScreenCTM().inverse()` transform. Same-target staff overlap is deduplicated; different-target overlap, missing geometry, invalid page identity or transform failure abstains. There is no radius, nearest-note or nearest-measure fallback.
+
+## 8. Note and measure interaction architecture
 
 The renderer does not install pointer/touch handlers. The host application owns gesture/event binding and decides when to call `hitTestNote()`.
 
@@ -227,6 +230,8 @@ flowchart TD
   Ref --> Resolve --> Select
   Select --> Highlight
 ```
+
+`BrowserScoreHost.hitTestMeasureDetailed()` is an additive revision-specific extension that returns current `renderEpoch`, optional bounded `sourceId` and either one presentation-only `{ partId, measureIndex }` target or a bounded MISS reason. `highlightMeasure()` and `clearMeasureHighlights()` expose reversible measure overlays through the browser host and generated runtime. These methods do not extend the base `ScoreRenderer` interface.
 
 Important ownership rule: **selection state is not stored by `BrowserScoreHost` or `OsmdRenderer`**. The renderer owns only reversible highlight presentation. Deselect behavior belongs to the consumer, typically by clearing consumer selection and calling `clearHighlights()`.
 
@@ -269,13 +274,15 @@ renderMusicXml(request)
 
 If validation, loading, rendering, capability checking or contract checking fails, the current renderer is disposed and the container is cleared. Stale notation is not retained after a failed replacement.
 
-The adapter itself can also rerender after `setPartVisible()`. Highlight and hit-test indexes are cleared/rebuilt around render changes.
+The adapter itself can also rerender after `setPartVisible()`. Deliberate load/render/part-visibility changes clear note and measure highlights and rebuild current indexes.
+
+OSMD `autoResize` can call its own `render()` without a new `BrowserScoreHost` replacement render. The adapter observes that vendor call, invalidates the old DOM ownership, rebuilds note/event/measure indexes and best-effort reapplies active note/TAB highlights to the new SVG. It does not restore consumer canonical selection and does not claim automatic restoration of measure overlays.
 
 ### Resize/reflow
 
-`ScoreRenderOptions.autoResize` is mapped to OSMD and defaults to `true` in the browser adapter. This repository does **not** implement a `ResizeObserver`, orientation-change listener, font-load listener or Safari-specific reflow controller. Any OSMD-internal resize behavior is vendor behavior, not an ST lifecycle contract.
+`ScoreRenderOptions.autoResize` is mapped to OSMD and defaults to `true` in the browser adapter. This repository does **not** implement its own `ResizeObserver`, orientation-change listener, font-load listener or Safari-specific reflow controller; OSMD owns the resize trigger. The adapter does own the post-redraw presentation boundary: it rebuilds current ownership and best-effort reapplies active note/TAB highlights.
 
-No ST code restores a selection after rerender because selection is consumer-owned. A deterministic `ScoreNoteRef` can remain equal when traversal is unchanged; DOM identities are ephemeral and the hit-test index is rebuilt.
+No ST code restores canonical selection after rerender because selection is consumer-owned. A deterministic `ScoreNoteRef` can remain equal when traversal is unchanged; DOM identities are ephemeral and indexes are rebuilt. Measure overlays must be reapplied explicitly when the consumer requires them after an automatic redraw.
 
 ## 10. State management
 
@@ -296,8 +303,8 @@ flowchart TD
 
 ST-owned runtime state:
 
-- `BrowserScoreHost`: current renderer reference, disposed flag, render-in-flight flag;
-- `OsmdRenderer`: OSMD instance, loaded/rendered flags, highlight map, hit-test `WeakMap`;
+- `BrowserScoreHost`: current renderer reference, disposed flag, render-in-flight flag, current opaque `renderEpoch` and optional bounded `sourceId` evidence;
+- `OsmdRenderer`: OSMD instance, loaded/rendered flags, note-highlight snapshots, measure-overlay map, note/event ownership `WeakMap`s and bounded measure-region index;
 - headless renderer: current source and last SVG pages;
 - accessibility bridge: applied target snapshots and focus order.
 
@@ -406,6 +413,8 @@ Support means **ST contract/test evidence**, not every notation feature OSMD may
 | combined standard notation + TAB | SUPPORTED | same two-staff guitar fixture |
 | six-line guitar TAB | SUPPORTED | fixture asserts one TAB staff with six lines |
 | MusicXML technical string/fret display | DISPLAY_ONLY | fixture asserts fret labels `7` and `12`; no semantic guitar API |
+| exact noteheadless fret ownership/highlight | SUPPORTED | adapter tests resolve the exact OSMD/VexFlow graphical group and fail closed on ambiguity |
+| active note/TAB highlight after OSMD automatic redraw | SUPPORTED | adapter regression tests replace SVG nodes, rebuild ownership and repaint held highlights |
 | note voice/staff traversal for interaction | SUPPORTED | note-interaction tests |
 | hammer-on | UNSUPPORTED | no ST capability/contract/test |
 | pull-off | UNSUPPORTED | no ST capability/contract/test |
@@ -417,14 +426,15 @@ Support means **ST contract/test evidence**, not every notation feature OSMD may
 
 ## 16. Mobile / iPhone / Safari architecture
 
-There is no Safari-specific code path and no automated WebKit/Safari job.
+There is no Safari-specific code path. CI includes a pinned Playwright WebKit-engine regression gate; this is engine evidence, not physical iPhone/Safari acceptance.
 
 The interaction implementation is browser-generic:
 
-- host supplies `clientX/clientY`;
-- adapter uses `elementFromPoint()`;
-- exact notehead/unique graphical group establishes deterministic ownership;
-- shared groups abstain.
+- host supplies fresh `clientX/clientY`;
+- NOTE/REST ownership uses `elementFromPoint()` plus renderer-owned DOM maps;
+- measure ownership uses current OSMD geometry plus the correct owned SVG page transform;
+- exact notehead or unique graphical/VexFlow group establishes deterministic note/TAB ownership;
+- shared or ambiguous note/measure ownership abstains.
 
 PR #16 records real iPhone/Safari acceptance evidence that exact-notehead-only ownership was too narrow and motivated the unique graphical-group widening. Repository CI itself proves narrow responsive rendering at 320px in Chrome/Chromium, not Safari.
 
@@ -475,7 +485,7 @@ The protected-branch `foundation` workflow performs:
 2. real Chrome/Chromium browser fixtures (`npm run test:browser`);
 3. real headless visual-regression gate (`npm run test:headless`).
 
-There is no automated Safari/WebKit gate and no ScoreGraph/playback/OMR test because those components do not exist here.
+The CI matrix includes pinned Playwright WebKit-engine coverage in addition to Chromium and headless validation. There is no physical Safari automation and no ScoreGraph/playback/OMR test because those components do not exist here.
 
 See [TESTING.md](TESTING.md).
 
@@ -488,14 +498,16 @@ The following are code/test backed:
 3. Browser replacement failure clears stale renderer-owned presentation.
 4. Only one BrowserScoreHost replacement render may be in flight.
 5. `ScoreNoteRef` is deterministic from rendered traversal; pitch/duration/proximity are not identity inputs.
-6. Ambiguous note DOM ownership fails closed rather than guessing.
-7. Highlighting mutates renderer-owned DOM presentation state, not source MusicXML colors.
-8. Hit-test DOM ownership is rebuilt after render changes; stale DOM is not retained by the current WeakMap index.
-9. Selection/canonical musical authority remains outside the renderer.
-10. Accessibility application resolves all targets before mutation and restores captured attributes on clear/dispose.
-11. Headless adapter does not advertise interactive capabilities.
-12. Exported runtime page policy disables network connections with CSP.
-13. Rendering code has no playback/audio/MIDI/realtime authority.
+6. Ambiguous note/TAB DOM ownership fails closed rather than guessing.
+7. Measure targeting uses only current-render OSMD geometry and the correct owned SVG page transform; page-order and nearest-measure inference are forbidden.
+8. Highlighting mutates renderer-owned DOM presentation state, not source MusicXML colors.
+9. OSMD automatic redraw rebuilds current ownership and may restore active note/TAB presentation, but never consumer canonical selection or implicit measure-overlay state.
+10. Hit-test DOM ownership is rebuilt after render changes; stale DOM is not retained by current ownership maps.
+11. Selection/canonical musical authority remains outside the renderer.
+12. Accessibility application resolves all targets before mutation and restores captured attributes on clear/dispose.
+13. Headless adapter does not advertise interactive capabilities.
+14. Exported runtime page policy disables network connections with CSP.
+15. Rendering code has no playback/audio/MIDI/realtime authority.
 
 ## 22. Terminology
 
@@ -505,9 +517,10 @@ The following are code/test backed:
 | `ScoreNoteRef` | deterministic rendered-note locator |
 | canonical note | consumer/upstream authoritative musical identity; not implemented here |
 | visual geometry | OSMD-produced SVG geometry |
-| interaction geometry | exact notehead plus uniquely-owned graphical group DOM ownership |
-| hit region | DOM elements that resolve deterministically to one `ScoreNoteRef` |
-| highlight | reversible renderer-owned SVG class/attribute state |
+| interaction geometry | exact notehead plus uniquely-owned graphical group DOM ownership; exact OSMD/VexFlow group identity for noteheadless TAB |
+| note/TAB hit region | DOM elements that resolve deterministically to one `ScoreNoteRef` |
+| measure hit region | current-render OSMD graphical-measure rectangle projected through the correct owned SVG page |
+| highlight | reversible renderer-owned SVG class/attribute or measure-overlay state |
 | selection | consumer-owned application state |
 | browser host | `BrowserScoreHost`, ST-owned presentation/lifecycle boundary |
 | adapter | ST implementation that isolates a renderer vendor |
